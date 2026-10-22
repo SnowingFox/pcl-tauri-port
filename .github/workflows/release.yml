@@ -1,0 +1,349 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds a universal (arm64 + x86_64) macOS bundle and
+# creates a DRAFT GitHub release with the .dmg and SHA256SUMS. Nothing is published
+# until a maintainer reviews the draft and clicks "Publish".
+#
+# Signing and notarization are optional and controlled purely by repository secrets,
+# see docs/RELEASING.md. Without them the build is unsigned and the release notes say so.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  ASSET_DIR: release-assets
+  ARTIFACT_NAME: macos-universal-release
+
+jobs:
+  build:
+    name: Build universal macOS bundle
+    runs-on: macos-latest
+    timeout-minutes: 90
+    # Holds the (optional) Apple signing secrets, but only a read-only token.
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      signed: ${{ steps.signing.outputs.enabled }}
+      app_name: ${{ steps.collect.outputs.app_name }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate tag and versions
+        id: meta
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag is not of the form vMAJOR.MINOR.PATCH[-prerelease]: $TAG"
+            exit 1
+          fi
+          version="${TAG#v}"
+          major="${version%%.*}"
+
+          pkg_version="$(node -p "require('./package.json').version")"
+          conf_version="$(node -p "require('./src-tauri/tauri.conf.json').version || ''")"
+          cargo_version="$(awk -F'"' '/^version[[:space:]]*=/ { print $2; exit }' src-tauri/Cargo.toml)"
+
+          status=0
+          check() {
+            if [ "$2" != "$version" ]; then
+              echo "::error::$1 is '$2' but the tag says '$version'"
+              status=1
+            fi
+          }
+          check "package.json version" "$pkg_version"
+          check "src-tauri/Cargo.toml version" "$cargo_version"
+          # tauri.conf.json may omit "version" (Tauri then uses Cargo.toml); only compare when set.
+          if [ -n "$conf_version" ]; then
+            check "src-tauri/tauri.conf.json version" "$conf_version"
+          fi
+          if [ "$status" -ne 0 ]; then
+            exit 1
+          fi
+
+          # 0.x versions and SemVer pre-releases are published as GitHub pre-releases.
+          if [ "$major" = "0" ] || [[ "$version" == *-* ]]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+          {
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $version (prerelease=$prerelease)"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # No Swatinem/rust-cache here on purpose: release builds should not reuse a cache that
+      # pull-request CI runs can write to.
+      - name: Set up Rust (stable, both macOS targets)
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --target aarch64-apple-darwin --target x86_64-apple-darwin
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      # Fails if Cargo.lock is out of date with Cargo.toml, so the build cannot silently re-resolve.
+      - name: Fetch Rust dependencies (locked)
+        working-directory: src-tauri
+        run: cargo fetch --locked
+
+      - name: Detect signing configuration
+        id: signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          required=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
+          missing=()
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Signing"
+              echo "All Apple signing secrets are configured: the app will be signed with a Developer ID and notarized."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            if [ "${#missing[@]}" -lt "${#required[@]}" ]; then
+              echo "::warning::Only some Apple signing secrets are set (missing: ${missing[*]}). Building UNSIGNED."
+            else
+              echo "::notice::No Apple signing secrets configured. Building UNSIGNED."
+            fi
+            {
+              echo "### Signing"
+              echo "**This is an unsigned, non-notarized build.** Missing repository secrets: ${missing[*]}."
+              echo "Users must remove the quarantine flag after installing, see docs/RELEASING.md to enable signing."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Two separate build steps on purpose: Tauri treats a variable that is set but empty
+      # (which is what an unset secret expands to) as configured, so the unsigned build must not
+      # export any APPLE_* variable at all.
+      - name: Build (signed and notarized)
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          # Tauri imports the base64 .p12 into a temporary keychain, signs the app and dmg, then
+          # notarizes and staples the app when the Apple ID variables are present.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Build (unsigned)
+        if: steps.signing.outputs.enabled != 'true'
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Collect and sanity-check artifacts
+        id: collect
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          bundle=src-tauri/target/universal-apple-darwin/release/bundle
+          dmgs=("$bundle"/dmg/*.dmg)
+          apps=("$bundle"/macos/*.app)
+          if [ "${#dmgs[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one .dmg in $bundle/dmg, found ${#dmgs[@]}"
+            exit 1
+          fi
+          if [ "${#apps[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one .app in $bundle/macos, found ${#apps[@]}"
+            exit 1
+          fi
+          app="${apps[0]}"
+          app_name="$(basename "$app" .app)"
+
+          # The binary must really contain both architectures.
+          exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+          archs="$(lipo -archs "$app/Contents/MacOS/$exe")"
+          echo "Architectures in $exe: $archs"
+          case " $archs " in
+            *" arm64 "*" x86_64 "* | *" x86_64 "*" arm64 "*) ;;
+            *)
+              echo "::error::Universal binary expected (arm64 + x86_64), got: $archs"
+              exit 1
+              ;;
+          esac
+
+          # Stable, shell-friendly asset name that keeps the licence-mandated name prefix.
+          asset="Plain-Craft-Launcher-PCL-Tauri_${VERSION}_universal.dmg"
+          mkdir -p "$ASSET_DIR"
+          cp "${dmgs[0]}" "$ASSET_DIR/$asset"
+          hdiutil verify "$ASSET_DIR/$asset"
+          (cd "$ASSET_DIR" && shasum -a 256 "$asset" > SHA256SUMS && cat SHA256SUMS)
+
+          {
+            echo "app_name=$app_name"
+            echo "app_path=$app"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify signature (signed builds only)
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          APP_PATH: ${{ steps.collect.outputs.app_path }}
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          spctl --assess --type execute -vv "$APP_PATH"
+          # A missing staple is not fatal: Gatekeeper can fall back to an online ticket check.
+          xcrun stapler validate "$APP_PATH" || echo "::warning::stapler validate failed; the notarization ticket is not stapled"
+
+      - name: Record bundle details in the job summary
+        env:
+          APP_PATH: ${{ steps.collect.outputs.app_path }}
+          SIGNED: ${{ steps.signing.outputs.enabled }}
+        run: |
+          {
+            echo "### Bundle"
+            echo '```'
+            ls -lh "$ASSET_DIR"
+            echo
+            echo "codesign -dv:"
+            codesign -dv --verbose=2 "$APP_PATH" 2>&1 || true
+            echo
+            echo "spctl --assess (signed=$SIGNED):"
+            spctl --assess --type execute -vv "$APP_PATH" 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ASSET_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Create draft release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The only job with a write token. It runs no project code and has no signing secrets.
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.build.outputs.version }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      SIGNED: ${{ needs.build.outputs.signed }}
+      APP_NAME: ${{ needs.build.outputs.app_name }}
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ASSET_DIR }}
+
+      - name: Write release notes
+        run: |
+          set -euo pipefail
+          cat > notes.tpl <<'EOF'
+          Plain Craft Launcher (PCL) Tauri @VERSION@: a third-party macOS port derived from Plain Craft Launcher (PCL). It is not affiliated with or endorsed by the original author.
+
+          ## Install
+
+          1. Download the `.dmg`, open it and drag the app to Applications.
+          2. Check the download: `shasum -a 256 -c SHA256SUMS` (run it next to both files).
+          EOF
+          if [ "$SIGNED" = "true" ]; then
+            cat >> notes.tpl <<'EOF'
+
+          This build is signed with an Apple Developer ID and notarized.
+          EOF
+          else
+            cat >> notes.tpl <<'EOF'
+
+          ## Unsigned build
+
+          This build is **not signed or notarized**, so macOS Gatekeeper blocks the first launch. After copying the app to Applications, remove the quarantine flag once:
+
+          ```
+          xattr -dr com.apple.quarantine "/Applications/@APP_NAME@.app"
+          ```
+          EOF
+          fi
+          if [ "$PRERELEASE" = "true" ]; then
+            cat >> notes.tpl <<'EOF'
+
+          This is a pre-release (0.x): expect rough edges. See CHANGELOG.md and the README for known limitations.
+          EOF
+          fi
+          # Plain substitution. Unquoted replacement text behaves the same in every bash version
+          # (quoted replacements keep their quotes in some), and bash 5.2's special handling of '&'
+          # in the replacement is switched off.
+          shopt -u patsub_replacement 2> /dev/null || true
+          body="$(cat notes.tpl)"
+          body="${body//@VERSION@/$VERSION}"
+          body="${body//@APP_NAME@/$APP_NAME}"
+          printf '%s\n' "$body" > notes.md
+          cat notes.md
+
+      - name: Create or update the draft release
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=("$ASSET_DIR"/*)
+          if [ "${#assets[@]}" -ne 2 ]; then
+            echo "::error::Expected the .dmg and SHA256SUMS in $ASSET_DIR, found ${#assets[@]} file(s)"
+            exit 1
+          fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # Re-run for an existing release: replace assets and notes, keep its draft/published state.
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            gh release edit "$TAG" --notes-file notes.md --prerelease="$PRERELEASE"
+          else
+            args=(--draft --verify-tag --title "Plain Craft Launcher (PCL) Tauri $VERSION" --notes-file notes.md)
+            if [ "$PRERELEASE" = "true" ]; then
+              args+=(--prerelease)
+            fi
+            gh release create "$TAG" "${args[@]}" "${assets[@]}"
+          fi
+          {
+            echo "### Draft release"
+            echo "Review and publish: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases"
+          } >> "$GITHUB_STEP_SUMMARY"
