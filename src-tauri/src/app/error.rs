@@ -1,7 +1,7 @@
 //! Typed errors returned by the `app_*` commands: `{ code, message, details? }`.
 
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppError {
@@ -68,9 +68,7 @@ impl From<crate::accounts::AccountError> for AppError {
         let msg = e.to_string();
         match e {
             E::NotFound(id) => Self::new("ACCOUNT_NOT_FOUND", format!("账号不存在：{id}")),
-            E::NeedRelogin | E::Declined | E::DeviceCodeExpired => {
-                Self::new("ACCOUNT_EXPIRED", "登录已过期，请重新登录该账号")
-            }
+            E::NeedRelogin | E::Declined | E::DeviceCodeExpired => Self::new("ACCOUNT_EXPIRED", "登录已过期，请重新登录该账号"),
             E::MissingClientId => Self::new("MS_CLIENT_ID_MISSING", "未配置 Microsoft 登录所需的应用 Client ID，无法使用微软账号启动"),
             E::Network(_) => Self::new("NETWORK", format!("网络错误：{msg}")),
             E::Io(_) => Self::new("IO", msg),
@@ -106,7 +104,19 @@ impl From<crate::download::error::DlError> for AppError {
 }
 
 /// Codes that may be carried inside a `DlError::Other("CODE: message")`.
-const KNOWN_CODES: &[&str] = &["MANUAL_DOWNLOAD_REQUIRED", "CURSEFORGE_KEY_MISSING", "NO_COMPATIBLE_VERSION", "INSTANCE_EXISTS", "UNSUPPORTED", "NETWORK", "INVALID_ARGUMENT", "WORLD_NOT_FOUND", "INSTANCE_NOT_MODDABLE", "IO", "INTERNAL"];
+const KNOWN_CODES: &[&str] = &[
+    "MANUAL_DOWNLOAD_REQUIRED",
+    "CURSEFORGE_KEY_MISSING",
+    "NO_COMPATIBLE_VERSION",
+    "INSTANCE_EXISTS",
+    "UNSUPPORTED",
+    "NETWORK",
+    "INVALID_ARGUMENT",
+    "WORLD_NOT_FOUND",
+    "INSTANCE_NOT_MODDABLE",
+    "IO",
+    "INTERNAL",
+];
 
 impl From<crate::launch::LaunchError> for AppError {
     fn from(e: crate::launch::LaunchError) -> Self {

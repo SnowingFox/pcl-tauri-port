@@ -5,15 +5,15 @@
 //! files with SHA-1 verification -> register the instance. Files the platform refuses to serve
 //! are reported (`app://modpack-report`) instead of failing the install.
 
-use super::error::{from_resource_error, into_task_error, AppError, AppResult};
+use super::AppCtx;
+use super::error::{AppError, AppResult, from_resource_error, into_task_error};
 use super::install::{self, LoaderChoice};
 use super::resource::{self, ResourceApi};
-use super::AppCtx;
 use crate::download::engine::FileSpec;
 use crate::download::error::{DlError, DlResult};
 use crate::download::{Manager, SpawnOpts, TaskCtx};
 use crate::instances::detect::validate_name;
-use crate::modpack::{self as mp, LoaderSpec, ModpackInstaller, ModpackInstallPlan, PlanFile};
+use crate::modpack::{self as mp, LoaderSpec, ModpackInstallPlan, ModpackInstaller, PlanFile};
 use crate::resources::types::{ModLoader, Platform};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -23,7 +23,9 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ModpackSource {
-    File { path: String },
+    File {
+        path: String,
+    },
     Project {
         platform: Platform,
         #[serde(rename = "projectId")]
@@ -101,7 +103,9 @@ impl ModpackInstaller for EngineInstaller {
         }
         let pre_existed = crate::install::vanilla::version_json_path(&self.root, mc_version).is_file();
         self.ctx.tracker.set_scale(0.0, 0.5);
-        let produced = install::install_version(&self.ctx, &self.mgr, mc_version, choice.as_ref(), self.java.clone()).await.map_err(|e| e.to_string())?;
+        let produced = install::install_version(&self.ctx, &self.mgr, mc_version, choice.as_ref(), self.java.clone())
+            .await
+            .map_err(|e| e.to_string())?;
         self.ctx.tracker.set_scale(0.5, 0.5);
         let (root, name) = (self.root.clone(), self.instance_name.clone());
         tokio::task::spawn_blocking(move || install::finalize_name(&root, &produced, &name, pre_existed))
@@ -162,7 +166,10 @@ pub async fn resolve_plan(api: &dyn ResourceApi, plan: &mut ModpackInstallPlan) 
         }
         None => true,
     });
-    let gone = gone.iter().map(|r| MissingFile { path: String::new(), project_id: r.project_id, file_id: r.file_id, page_url: page_url(r) }).collect();
+    let gone = gone
+        .iter()
+        .map(|r| MissingFile { path: String::new(), project_id: r.project_id, file_id: r.file_id, page_url: page_url(r) })
+        .collect();
     Ok(Resolved { gone, soft })
 }
 
@@ -195,7 +202,14 @@ async fn fetch_soft(t: &TaskCtx, api: &dyn ResourceApi, dir: &Path, soft: Vec<So
 }
 
 /// Download the pack archive for a platform project into `dest`.
-async fn fetch_pack(t: &TaskCtx, api: &dyn ResourceApi, platform: Platform, project: &str, version: Option<&str>, dest: &Path) -> AppResult<()> {
+async fn fetch_pack(
+    t: &TaskCtx,
+    api: &dyn ResourceApi,
+    platform: Platform,
+    project: &str,
+    version: Option<&str>,
+    dest: &Path,
+) -> AppResult<()> {
     let file = match version {
         Some(v) => api.version(platform, v).await.map_err(from_resource_error)?,
         None => {
@@ -206,7 +220,9 @@ async fn fetch_pack(t: &TaskCtx, api: &dyn ResourceApi, platform: Platform, proj
     let name = resource::safe_file_name(&file.file_name)?;
     let url = match file.download_urls.first() {
         Some(u) => u.clone(),
-        None => api.download_url(&file).await.map_err(|e| AppError::new("MANUAL_DOWNLOAD_REQUIRED", format!("{name} 不允许第三方下载：{e}")))?,
+        None => {
+            api.download_url(&file).await.map_err(|e| AppError::new("MANUAL_DOWNLOAD_REQUIRED", format!("{name} 不允许第三方下载：{e}")))?
+        }
     };
     t.tracker.begin_stage("pack-archive", 0.0, 1.0, 1, file.size);
     let mut spec = FileSpec::new(url, dest).with_sha1(file.sha1.clone()).with_size(Some(file.size).filter(|s| *s > 0));

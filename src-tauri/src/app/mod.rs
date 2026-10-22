@@ -66,7 +66,6 @@ impl AppCtx {
             None => Ok(crate::accounts::commands::manager()?),
         }
     }
-
 }
 
 /// Run once from the Tauri `setup` hook.
@@ -94,4 +93,3 @@ pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(Arc::new(AppCtx::new(mgr, crate::launch::tauri_emit(app))));
     Ok(())
 }
-

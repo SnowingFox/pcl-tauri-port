@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 
 /// A log file only counts for an automatic analysis if it was written this recently.
 pub const RECENT_WINDOW: Duration = Duration::from_secs(3 * 60);
-const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -77,7 +77,7 @@ pub fn candidate_paths(game_dir: &Path, root: &Path) -> Vec<PathBuf> {
         v.extend(
             rd.flatten()
                 .map(|e| e.path())
-                .filter(|p| p.is_file() && p.file_name().and_then(|n| n.to_str()).map_or(false, |n| n.starts_with("hs_err"))),
+                .filter(|p| p.is_file() && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("hs_err"))),
         );
     }
     v.push(game_dir.join("logs").join("latest.log"));
@@ -141,11 +141,11 @@ pub fn collect(paths: &[PathBuf], recent_only: bool, live_output: Option<&[Strin
 
     let mc_files: Vec<&(PathBuf, Kind, Vec<String>, SystemTime)> = files.iter().filter(|f| f.1 == Kind::McLog).collect();
     if !mc_files.is_empty() {
-        let by_name = |n: &str| {
-            mc_files.iter().find(|f| f.0.file_name().and_then(|x| x.to_str()).map(|x| x.to_lowercase()).as_deref() == Some(n))
-        };
+        let by_name =
+            |n: &str| mc_files.iter().find(|f| f.0.file_name().and_then(|x| x.to_str()).map(|x| x.to_lowercase()).as_deref() == Some(n));
         let mut mc = String::new();
-        for n in ["rawoutput.log", "启动器日志.txt", "log1.txt", "游戏崩溃前的输出.txt", "pcl2 启动器日志.txt", "pcl 启动器日志.txt"] {
+        for n in ["rawoutput.log", "启动器日志.txt", "log1.txt", "游戏崩溃前的输出.txt", "pcl2 启动器日志.txt", "pcl 启动器日志.txt"]
+        {
             if let Some(f) = by_name(n) {
                 let mut after = false;
                 let mut got = false;
@@ -161,7 +161,7 @@ pub fn collect(paths: &[PathBuf], recent_only: bool, live_output: Option<&[Strin
                 if !got {
                     mc.push_str(&head_tail_lines(&f.2, 0, 500));
                 }
-                mc = mc.trim_end_matches(|c| c == '\r' || c == '\n').to_string();
+                mc = mc.trim_end_matches(['\r', '\n']).to_string();
                 break;
             }
         }
@@ -196,10 +196,7 @@ pub fn collect(paths: &[PathBuf], recent_only: bool, live_output: Option<&[Strin
         }
         // PCL prefers the game log as the file to open when there is no hs_err/crash report.
         if primary.is_none() {
-            primary = mc_files
-                .iter()
-                .find(|f| f.0 != Path::new("rawoutput.log"))
-                .map(|f| f.0.to_string_lossy().into_owned());
+            primary = mc_files.iter().find(|f| f.0 != Path::new("rawoutput.log")).map(|f| f.0.to_string_lossy().into_owned());
         }
     }
     let _ = raw_output_used;

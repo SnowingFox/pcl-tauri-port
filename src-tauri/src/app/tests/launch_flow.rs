@@ -50,7 +50,8 @@ async fn launches_and_repairs_missing_files() {
     assert!(stages(&h).contains(&"running".to_string()), "{:?}", stages(&h));
 
     // arguments: memory merged from settings, game dir isolated, library on the classpath
-    let log: Vec<String> = h.names("launch://log").iter().filter(|e| e["stream"] == "stdout").map(|e| e["line"].as_str().unwrap().to_string()).collect();
+    let log: Vec<String> =
+        h.names("launch://log").iter().filter(|e| e["stream"] == "stdout").map(|e| e["line"].as_str().unwrap().to_string()).collect();
     let args: Vec<&str> = log.iter().filter_map(|l| l.strip_prefix("ARG:")).collect();
     let after = |flag: &str| args.iter().position(|a| *a == flag).map(|i| args[i + 1]);
     assert!(args.contains(&"-Xmx3000m"), "memory from settings: {args:?}");
@@ -83,7 +84,11 @@ async fn second_launch_needs_no_download() {
     launch::launch(&h.ctx, &inst, &acc, Some("l2".into())).await.unwrap();
     assert_eq!(s.server.received_requests().await.unwrap().len(), before, "nothing downloaded again");
     assert!(h.names("launch://progress").iter().all(|e| e.get("taskId").is_none()), "no download task was started");
-    assert!(h.ctx.mgr.list().is_empty(), "no task for the second launch: {:?}", h.ctx.mgr.list().iter().map(|t| &t.kind).collect::<Vec<_>>());
+    assert!(
+        h.ctx.mgr.list().is_empty(),
+        "no task for the second launch: {:?}",
+        h.ctx.mgr.list().iter().map(|t| &t.kind).collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -144,9 +149,11 @@ async fn files_missing_when_repair_cannot_help() {
 #[tokio::test]
 async fn crash_exit_carries_analysis() {
     let mut h = Harness::new();
-    h.use_java(r#"echo "[12:00:00] [main/ERROR]: java.lang.OutOfMemoryError: Java heap space" >&2
+    h.use_java(
+        r#"echo "[12:00:00] [main/ERROR]: java.lang.OutOfMemoryError: Java heap space" >&2
 echo "[12:00:00] [Render thread/INFO]: Setting user: Steve"
-exit 1"#);
+exit 1"#,
+    );
     let _s = half_installed(&h, "1.20.1").await;
     let acc = h.offline_account("Steve");
     launch::launch(&h.ctx, "1.20.1", &acc, Some("crashy".into())).await.unwrap();
@@ -234,8 +241,12 @@ async fn authlib_injector_is_added_for_thirdparty_accounts() {
     let _s = half_installed(&h, "1.20.1").await;
 
     // yggdrasil server with metadata + auth; the injector artifact is served locally too
-    let ygg = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"meta":{"serverName":"Skins"}}"#)).mount(&ygg).await;
+    let ygg = mock_server().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"meta":{"serverName":"Skins"}}"#))
+        .mount(&ygg)
+        .await;
     Mock::given(method("POST")).and(path("/authserver/authenticate")).respond_with(ResponseTemplate::new(200).set_body_string(
         r#"{"accessToken":"ygg-access-token-123456","clientToken":"client-token-xyz","selectedProfile":{"id":"0123456789abcdef0123456789abcdef","name":"Skinny"}}"#)).mount(&ygg).await;
     Mock::given(method("POST")).and(path("/authserver/validate")).respond_with(ResponseTemplate::new(204)).mount(&ygg).await;
@@ -248,7 +259,8 @@ async fn authlib_injector_is_added_for_thirdparty_accounts() {
 
     launch::launch(&h.ctx, "1.20.1", &acc.id, Some("ygg".into())).await.unwrap();
     h.wait_event("launch://exit", 20).await;
-    let out: Vec<String> = h.names("launch://log").iter().filter(|e| e["stream"] == "stdout").map(|e| e["line"].as_str().unwrap().to_string()).collect();
+    let out: Vec<String> =
+        h.names("launch://log").iter().filter(|e| e["stream"] == "stdout").map(|e| e["line"].as_str().unwrap().to_string()).collect();
     let agent = out.iter().find(|l| l.starts_with("ARG:-javaagent:")).expect("-javaagent passed");
     assert!(agent.contains(&jar.display().to_string()) && agent.ends_with(&format!("={}", ygg.uri())), "{agent}");
     assert!(out.iter().any(|l| l.starts_with("ARG:-Dauthlibinjector.yggdrasil.prefetched=")));
@@ -263,7 +275,7 @@ async fn authlib_injector_is_added_for_thirdparty_accounts() {
 #[tokio::test]
 async fn injector_download_goes_through_engine() {
     let h = Harness::new();
-    let art = MockServer::start().await;
+    let art = mock_server().await;
     let body = b"fake-injector-jar".to_vec();
     Mock::given(method("GET")).and(path("/a.jar")).respond_with(ResponseTemplate::new(200).set_body_bytes(body.clone())).mount(&art).await;
     // Same call the pipeline makes, with the artifact meta redirected to the local server.
@@ -304,10 +316,8 @@ async fn concurrent_launch_of_same_instance_is_rejected() {
     h.use_java("sleep 0.2\nexit 0");
     let _s = half_installed(&h, "1.20.1").await;
     let acc = h.offline_account("Steve");
-    let (a, b) = tokio::join!(
-        launch::launch(&h.ctx, "1.20.1", &acc, Some("c1".into())),
-        launch::launch(&h.ctx, "1.20.1", &acc, Some("c2".into()))
-    );
+    let (a, b) =
+        tokio::join!(launch::launch(&h.ctx, "1.20.1", &acc, Some("c1".into())), launch::launch(&h.ctx, "1.20.1", &acc, Some("c2".into())));
     let codes: Vec<_> = [&a, &b].iter().map(|r| r.as_ref().err().map(|e| e.code)).collect();
     assert_eq!(codes.iter().filter(|c| **c == Some("ALREADY_LAUNCHING")).count(), 1, "{codes:?}");
     assert_eq!([&a, &b].iter().filter(|r| r.is_ok()).count(), 1);

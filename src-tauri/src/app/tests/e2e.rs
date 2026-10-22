@@ -47,7 +47,10 @@ async fn install_and_launch(h: &mut Harness, mc: &str, loader: Option<ainstall::
     let mut lines: Vec<String>;
     loop {
         lines = h.names("launch://log").iter().map(|e| e["line"].as_str().unwrap_or("").to_string()).collect();
-        if markers.iter().all(|m| lines.iter().any(|l| l.contains(m))) || !h.names("launch://exit").is_empty() || std::time::Instant::now() > deadline {
+        if markers.iter().all(|m| lines.iter().any(|l| l.contains(m)))
+            || !h.names("launch://exit").is_empty()
+            || std::time::Instant::now() > deadline
+        {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -55,7 +58,11 @@ async fn install_and_launch(h: &mut Harness, mc: &str, loader: Option<ainstall::
     if let Some(header) = h.names("launch://log").into_iter().find(|e| e["stream"] == "launcher") {
         // JVM options only (up to the classpath / module path), the rest is long and uninteresting
         let line = header["line"].as_str().unwrap_or("");
-        let jvm: Vec<&str> = line.split(' ').filter(|a| a.starts_with("-X") || a.starts_with("-D") && !a.contains("ignoreList") || *a == "-p" || *a == "-cp").take(40).collect();
+        let jvm: Vec<&str> = line
+            .split(' ')
+            .filter(|a| a.starts_with("-X") || a.starts_with("-D") && !a.contains("ignoreList") || *a == "-p" || *a == "-cp")
+            .take(40)
+            .collect();
         eprintln!("  launcher jvm options: {}", jvm.join(" "));
     }
     let reached = markers.iter().all(|m| lines.iter().any(|l| l.contains(m)));
@@ -97,7 +104,11 @@ async fn real_vanilla_install_and_launch() {
     for l in lines.iter().filter(|l| l.contains("Setting user") || l.contains("Backend library") || l.contains("LWJGL")).take(6) {
         eprintln!("  game: {l}");
     }
-    assert!(lines.iter().any(|l| l.contains("Setting user")), "client never reached 'Setting user'; tail:\n{}", lines.iter().rev().take(25).rev().cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        lines.iter().any(|l| l.contains("Setting user")),
+        "client never reached 'Setting user'; tail:\n{}",
+        lines.iter().rev().take(25).rev().cloned().collect::<Vec<_>>().join("\n")
+    );
     assert!(lines.iter().any(|l| l.contains("Backend library")));
 }
 
@@ -110,13 +121,25 @@ async fn real_fabric_install_and_launch() {
     let v = versions.iter().find(|v| v.stable == Some(true)).or(versions.first()).expect("a fabric version").version.clone();
     eprintln!("fabric loader {v}");
     let lines = install_and_launch(&mut h, &mc, Some(ainstall::LoaderChoice { kind: "fabric".into(), version: v }), "E2E Fabric").await;
-    for l in lines.iter().filter(|l| l.contains("Setting user") || l.contains("Backend library") || l.contains("Fabric") || l.contains("Loading Minecraft")).take(8) {
+    for l in lines
+        .iter()
+        .filter(|l| l.contains("Setting user") || l.contains("Backend library") || l.contains("Fabric") || l.contains("Loading Minecraft"))
+        .take(8)
+    {
         eprintln!("  game: {l}");
     }
     let tail = || lines.iter().rev().take(25).rev().cloned().collect::<Vec<_>>().join("\n");
     // The launcher header line proves the Fabric Knot entry point and loader libraries were used.
-    assert!(lines.iter().any(|l| l.contains("net.fabricmc.loader.impl.launch.knot.KnotClient") && l.contains("fabric-loader")), "not launched through Fabric's Knot; tail:\n{}", tail());
-    assert!(lines.iter().any(|l| l.contains("Loading Minecraft") && l.contains("Fabric Loader")), "Fabric Loader did not start; tail:\n{}", tail());
+    assert!(
+        lines.iter().any(|l| l.contains("net.fabricmc.loader.impl.launch.knot.KnotClient") && l.contains("fabric-loader")),
+        "not launched through Fabric's Knot; tail:\n{}",
+        tail()
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("Loading Minecraft") && l.contains("Fabric Loader")),
+        "Fabric Loader did not start; tail:\n{}",
+        tail()
+    );
     assert!(lines.iter().any(|l| l.contains("Setting user")), "client never reached 'Setting user'; tail:\n{}", tail());
     assert!(lines.iter().any(|l| l.contains("Backend library")), "no 'Backend library'; tail:\n{}", tail());
 }
@@ -144,13 +167,20 @@ async fn wait_task(h: &Harness, id: &str, what: &str) -> crate::download::TaskIn
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "needs network access"]
 async fn real_modrinth_resources() {
-    use crate::app::resource::{install_resource, LiveApi, ResourceRequest};
+    use crate::app::resource::{LiveApi, ResourceRequest, install_resource};
     use crate::resources::types::{Platform, ResourceKind};
     let h = Harness::new();
     let mc = "1.21.4";
     let versions = crate::install::loaders::list_loader_versions(&h.ctx.mgr, "fabric", mc).await.unwrap();
     let ver = versions.first().unwrap().version.clone();
-    let id = ainstall::install_game(&h.ctx, mc.into(), Some(ainstall::LoaderChoice { kind: "fabric".into(), version: ver }), Some("Res Test".into())).await.unwrap();
+    let id = ainstall::install_game(
+        &h.ctx,
+        mc.into(),
+        Some(ainstall::LoaderChoice { kind: "fabric".into(), version: ver }),
+        Some("Res Test".into()),
+    )
+    .await
+    .unwrap();
     assert_eq!(format!("{:?}", wait_task(&h, &id, "fabric install").await.status), "Completed");
     let inst = h.root.join("versions/Res Test");
     let inst_id = inst.to_string_lossy().into_owned();
@@ -161,16 +191,25 @@ async fn real_modrinth_resources() {
         ("w0TnApzs", ResourceKind::ResourcePack, "resourcepacks"),
         ("HVnmMxH1", ResourceKind::Shader, "shaderpacks"),
     ] {
-        let req = ResourceRequest { platform: Platform::Modrinth, project_id: project.into(), version_id: None, kind, instance_id: inst_id.clone(), world_name: None };
+        let req = ResourceRequest {
+            platform: Platform::Modrinth,
+            project_id: project.into(),
+            version_id: None,
+            kind,
+            instance_id: inst_id.clone(),
+            world_name: None,
+        };
         let tid = install_resource(&h.ctx, &LiveApi, req).await.unwrap_or_else(|e| panic!("{project}: {e}"));
         let info = wait_task(&h, &tid, project).await;
         assert_eq!(format!("{:?}", info.status), "Completed", "{project}: {:?}", info.error);
-        let files: Vec<_> = std::fs::read_dir(inst.join(dir)).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        let files: Vec<_> =
+            std::fs::read_dir(inst.join(dir)).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         eprintln!("  {dir}/: {files:?}");
         assert!(!files.is_empty());
     }
     // Mod Menu requires Fabric API (and a library): the dependency resolver must have pulled them in.
-    let mods: Vec<String> = std::fs::read_dir(inst.join("mods")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let mods: Vec<String> =
+        std::fs::read_dir(inst.join("mods")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     assert!(mods.len() >= 2, "required dependencies installed: {mods:?}");
     assert!(mods.iter().any(|m| m.to_lowercase().contains("fabric-api")), "{mods:?}");
     // the scanner of the mods list reads them back
@@ -178,7 +217,14 @@ async fn real_modrinth_resources() {
     assert!(listed.iter().all(|m| m.meta.loaders.contains(&crate::resources::types::ModLoader::Fabric) || m.meta.mod_id.is_some()));
     eprintln!("  mods readable by the scanner: {:?}", listed.iter().filter_map(|m| m.meta.name.clone()).collect::<Vec<_>>());
     // datapack goes into the world
-    let req = ResourceRequest { platform: Platform::Modrinth, project_id: "w0TnApzs".into(), version_id: None, kind: ResourceKind::DataPack, instance_id: inst_id.clone(), world_name: Some("World1".into()) };
+    let req = ResourceRequest {
+        platform: Platform::Modrinth,
+        project_id: "w0TnApzs".into(),
+        version_id: None,
+        kind: ResourceKind::DataPack,
+        instance_id: inst_id.clone(),
+        world_name: Some("World1".into()),
+    };
     let tid = install_resource(&h.ctx, &LiveApi, req).await.unwrap();
     assert_eq!(format!("{:?}", wait_task(&h, &tid, "datapack").await.status), "Completed");
     assert!(inst.join("saves/World1/datapacks").read_dir().unwrap().count() >= 1);
@@ -189,7 +235,7 @@ async fn real_modrinth_resources() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "needs network access and PCL_E2E_JAVA; downloads a few hundred MB"]
 async fn real_modrinth_modpack_install_and_launch() {
-    use crate::app::modpack::{install_modpack, ModpackSource};
+    use crate::app::modpack::{ModpackSource, install_modpack};
     use crate::app::resource::LiveApi;
     let Some(h) = real_harness() else { return eprintln!("PCL_E2E_JAVA not set, skipping") };
     let src = ModpackSource::Project { platform: Platform::Modrinth, project_id: "1KVo5zza".into(), version_id: Some("37TmHvhB".into()) };
@@ -217,7 +263,16 @@ async fn real_modrinth_modpack_install_and_launch() {
     };
     let _ = crate::launch::kill_by_id(&lid);
     h.wait_event("launch://exit", 30).await;
-    for l in lines.iter().filter(|l| l.contains("Loading Minecraft") || l.contains("Setting user") || l.contains("Backend library") || l.contains("Loading ") && l.contains("mods")).take(6) {
+    for l in lines
+        .iter()
+        .filter(|l| {
+            l.contains("Loading Minecraft")
+                || l.contains("Setting user")
+                || l.contains("Backend library")
+                || l.contains("Loading ") && l.contains("mods")
+        })
+        .take(6)
+    {
         eprintln!("  game: {l}");
     }
     let tail = lines.iter().rev().take(30).rev().cloned().collect::<Vec<_>>().join("\n");
@@ -233,10 +288,17 @@ async fn real_loader_install_and_launch() {
     let mc = std::env::var("PCL_E2E_MC").unwrap_or_else(|_| "1.20.1".into());
     let versions = crate::install::loaders::list_loader_versions(&h.ctx.mgr, &kind, &mc).await.expect("loader versions");
     eprintln!("{kind} versions for {mc}: {:?}", versions.iter().take(4).map(|v| v.version.as_str()).collect::<Vec<_>>());
-    let version = std::env::var("PCL_E2E_LOADER_VERSION").ok().or_else(|| versions.first().map(|v| v.version.clone())).expect("a loader version");
+    let version =
+        std::env::var("PCL_E2E_LOADER_VERSION").ok().or_else(|| versions.first().map(|v| v.version.clone())).expect("a loader version");
     let name = format!("E2E {kind}");
     let lines = install_and_launch(&mut h, &mc, Some(ainstall::LoaderChoice { kind: kind.clone(), version }), &name).await;
-    for l in lines.iter().filter(|l| l.contains("Setting user") || l.contains("Backend library") || l.contains("ModLauncher") || l.contains("Loading Minecraft")).take(6) {
+    for l in lines
+        .iter()
+        .filter(|l| {
+            l.contains("Setting user") || l.contains("Backend library") || l.contains("ModLauncher") || l.contains("Loading Minecraft")
+        })
+        .take(6)
+    {
         eprintln!("  game: {l}");
     }
     let tail = lines.iter().rev().take(30).rev().cloned().collect::<Vec<_>>().join("\n");
@@ -253,8 +315,12 @@ async fn real_thirdparty_account_launch_with_authlib_injector() {
     let id = ainstall::install_game(&h.ctx, mc.clone(), None, Some("E2E Ygg".into())).await.unwrap();
     assert_eq!(format!("{:?}", wait_task(&h, &id, "vanilla install").await.status), "Completed");
 
-    let ygg = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"meta":{"serverName":"E2E Skins"},"skinDomains":["127.0.0.1"]}"#)).mount(&ygg).await;
+    let ygg = mock_server().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"meta":{"serverName":"E2E Skins"},"skinDomains":["127.0.0.1"]}"#))
+        .mount(&ygg)
+        .await;
     Mock::given(method("POST")).and(path("/authserver/authenticate")).respond_with(ResponseTemplate::new(200).set_body_string(
         r#"{"accessToken":"e2e-ygg-access-token-123456","clientToken":"e2e-client-token","selectedProfile":{"id":"0123456789abcdef0123456789abcdef","name":"SkinPlayer"}}"#)).mount(&ygg).await;
     Mock::given(method("POST")).and(path("/authserver/validate")).respond_with(ResponseTemplate::new(204)).mount(&ygg).await;
@@ -270,7 +336,10 @@ async fn real_thirdparty_account_launch_with_authlib_injector() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
     let lines = loop {
         let lines: Vec<String> = h.names("launch://log").iter().map(|e| e["line"].as_str().unwrap_or("").to_string()).collect();
-        if lines.iter().any(|l| l.contains("Backend library")) || !h.names("launch://exit").is_empty() || std::time::Instant::now() > deadline {
+        if lines.iter().any(|l| l.contains("Backend library"))
+            || !h.names("launch://exit").is_empty()
+            || std::time::Instant::now() > deadline
+        {
             break lines;
         }
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -281,9 +350,15 @@ async fn real_thirdparty_account_launch_with_authlib_injector() {
         eprintln!("  game: {l}");
     }
     let tail = lines.iter().rev().take(30).rev().cloned().collect::<Vec<_>>().join("\n");
-    assert!(lines.iter().any(|l| l.contains("-javaagent:") && l.contains("authlib-injector.jar")), "javaagent missing from the command line");
+    assert!(
+        lines.iter().any(|l| l.contains("-javaagent:") && l.contains("authlib-injector.jar")),
+        "javaagent missing from the command line"
+    );
     assert!(lines.iter().any(|l| l.contains("[authlib-injector]")), "the injector did not start; tail:\n{tail}");
-    assert!(lines.iter().any(|l| l.contains("Setting user: SkinPlayer")), "client did not start with the third-party profile; tail:\n{tail}");
+    assert!(
+        lines.iter().any(|l| l.contains("Setting user: SkinPlayer")),
+        "client did not start with the third-party profile; tail:\n{tail}"
+    );
     let all = lines.join("\n");
     assert!(!all.contains("e2e-ygg-access-token-123456"), "access token leaked into the game log");
 }

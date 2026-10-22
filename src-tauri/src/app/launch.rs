@@ -7,14 +7,14 @@
 use super::error::{AppError, AppResult};
 use super::instance::{self, ResolvedInstance};
 use super::tasks::run_task;
-use super::{paths, tuning, AppCtx};
+use super::{AppCtx, paths, tuning};
 use crate::accounts::{AuthSession, AuthlibInjectorConfig};
 use crate::download::engine::{FileSpec, ProgressEvent};
 use crate::download::manifest::VersionJson as DlVersionJson;
 use crate::download::{DownloadConfig, SpawnOpts};
 use crate::java::JavaInfo;
 use crate::launch::{self as core, AuthData, Emit, ExitInfo, LaunchRequest, PrecheckIssue, SpawnHooks};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -78,7 +78,10 @@ impl Drop for Guard {
 
 /// A client supplied launch id becomes part of a file name, so keep it boring.
 pub fn validate_launch_id(s: &str) -> AppResult<String> {
-    let ok = !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) && !s.starts_with('.');
+    let ok = !s.is_empty()
+        && s.len() <= 64
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !s.starts_with('.');
     ok.then(|| s.to_string()).ok_or_else(|| AppError::invalid("launchId 只能包含字母、数字、-、_、.（最长 64 位）"))
 }
 
@@ -124,7 +127,8 @@ pub fn version_chain(root: &Path, name: &str) -> AppResult<Vec<(String, Value)>>
         crate::instances::detect::validate_name(&cur).map_err(AppError::invalid)?;
         let p = root.join("versions").join(&cur).join(format!("{cur}.json"));
         let text = std::fs::read_to_string(&p).map_err(|e| AppError::new("INSTANCE_INVALID", format!("无法读取 {}：{e}", p.display())))?;
-        let raw: Value = serde_json::from_str(&text).map_err(|e| AppError::new("INSTANCE_INVALID", format!("{} 不是有效的 JSON：{e}", p.display())))?;
+        let raw: Value =
+            serde_json::from_str(&text).map_err(|e| AppError::new("INSTANCE_INVALID", format!("{} 不是有效的 JSON：{e}", p.display())))?;
         let next = raw["inheritsFrom"].as_str().filter(|s| !s.is_empty()).map(String::from);
         out.push((cur.clone(), raw));
         match next {
@@ -174,7 +178,11 @@ pub async fn ensure_authlib_injector(ctx: &AppCtx, rep: &Reporter) -> AppResult<
         return Ok(jar);
     }
     rep.stage("download", 0.10, "正在获取 authlib-injector");
-    let (url, sha256) = crate::accounts::yggdrasil::latest_injector(&crate::accounts::microsoft::http(), crate::accounts::yggdrasil::AUTHLIB_INJECTOR_LATEST_META).await?;
+    let (url, sha256) = crate::accounts::yggdrasil::latest_injector(
+        &crate::accounts::microsoft::http(),
+        crate::accounts::yggdrasil::AUTHLIB_INJECTOR_LATEST_META,
+    )
+    .await?;
     let dest = jar.clone();
     let r = rep.clone();
     let tap: crate::download::engine::Sink = Arc::new(move |p: &ProgressEvent| {
@@ -216,7 +224,13 @@ pub async fn launch(ctx: &AppCtx, instance_id: &str, account_id: &str, launch_id
     })
 }
 
-async fn run(ctx: &AppCtx, g: &crate::settings::GlobalSettings, inst: ResolvedInstance, account_id: &str, rep: Reporter) -> AppResult<String> {
+async fn run(
+    ctx: &AppCtx,
+    g: &crate::settings::GlobalSettings,
+    inst: ResolvedInstance,
+    account_id: &str,
+    rep: Reporter,
+) -> AppResult<String> {
     let id = rep.id.clone();
     // ---- check
     rep.stage("check", 0.0, "正在检查实例与账号");
@@ -267,12 +281,18 @@ async fn run(ctx: &AppCtx, g: &crate::settings::GlobalSettings, inst: ResolvedIn
         demo: false,
         resolution: tune.resolution,
     };
-    let (mut report, _) = { let r = req.clone(); blocking(move || core::precheck(&r)).await? };
+    let (mut report, _) = {
+        let r = req.clone();
+        blocking(move || core::precheck(&r)).await?
+    };
     if report.issues.iter().any(repairable) {
         rep.stage("download", 0.10, "发现缺失文件，正在补全");
         tracing::info!(issues = ?report.issues, "repairing missing files");
         repair(ctx, &inst, &rep).await?;
-        report = { let r = req.clone(); blocking(move || core::precheck(&r)).await?.0 };
+        report = {
+            let r = req.clone();
+            blocking(move || core::precheck(&r)).await?.0
+        };
     }
     let blocking_issues: Vec<&PrecheckIssue> = report.issues.iter().filter(|i| i.is_blocking()).collect();
     if !blocking_issues.is_empty() {
@@ -297,7 +317,10 @@ async fn run(ctx: &AppCtx, g: &crate::settings::GlobalSettings, inst: ResolvedIn
 
     // ---- natives
     rep.stage("natives", 0.70, "正在解压本地库");
-    let cmd = { let r = req.clone(); blocking(move || core::prepare(&r)).await?.map(|(c, _)| c)? };
+    let cmd = {
+        let r = req.clone();
+        blocking(move || core::prepare(&r)).await?.map(|(c, _)| c)?
+    };
     tracing::info!(command = %super::logging::mask(&cmd.display(&req.auth)), "launch command ready");
     rep.stage("natives", 0.90, "本地库就绪");
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "pcl-tauri-port",
+  "productName": "Plain Craft Launcher (PCL) Tauri Port (Third-Party)",
   "version": "0.1.0",
   "identifier": "com.snowingfox.pcltauriport",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "PCL Tauri",
+        "title": "Plain Craft Launcher (PCL) Tauri Port",
         "width": 1100,
         "height": 680,
         "minWidth": 900,
@@ -24,18 +24,64 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'none'",
+        "script-src": "'self'",
+        "style-src": "'self'",
+        "style-src-attr": "'unsafe-inline'",
+        "img-src": "'self' data: https://cdn.modrinth.com https://media.forgecdn.net https://media.curseforge.com",
+        "font-src": "'self' data:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-src": "'none'",
+        "frame-ancestors": "'none'",
+        "worker-src": "'none'",
+        "media-src": "'none'",
+        "manifest-src": "'none'"
+      },
+      "devCsp": {
+        "default-src": "'none'",
+        "script-src": "'self' 'unsafe-inline'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: https:",
+        "font-src": "'self' data:",
+        "connect-src": "ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-src": "'none'"
+      },
+      "freezePrototype": true,
+      "headers": {
+        "X-Content-Type-Options": "nosniff",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=(), serial=(), hid=()"
+      }
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app", "dmg"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "category": "Game",
+    "publisher": "SnowingFox",
+    "copyright": "Copyright (c) 2026 SnowingFox. Third-party work derived from Plain Craft Launcher (PCL) by LTCat (Long Teng Mao Yue); see LICENCE.",
+    "shortDescription": "Unofficial third-party macOS port of Plain Craft Launcher (PCL), built with Tauri",
+    "longDescription": "An independent, third-party Minecraft: Java Edition launcher for macOS, based on Plain Craft Launcher (PCL). Not affiliated with or endorsed by PCL, its author, Mojang or Microsoft.",
+    "resources": {
+      "../LICENCE": "LICENCE"
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist"
+    }
   }
 }

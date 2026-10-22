@@ -51,10 +51,7 @@ pub fn parse_file(f: &Value) -> ResourceFile {
     let mut loaders: Vec<ModLoader> = gv.iter().filter_map(|x| ModLoader::from_name(x)).collect();
     loaders.sort();
     loaders.dedup();
-    let game_versions = gv
-        .into_iter()
-        .filter(|x| x.chars().next().is_some_and(|c| c.is_ascii_digit()))
-        .collect();
+    let game_versions = gv.into_iter().filter(|x| x.chars().next().is_some_and(|c| c.is_ascii_digit())).collect();
     let sha1 = f["hashes"]
         .as_array()
         .and_then(|h| h.iter().find(|x| x["algo"].as_u64() == Some(1)))
@@ -133,11 +130,7 @@ pub async fn project(id: &str) -> Result<ProjectSummary> {
     Ok(parse_mod(&v["data"]))
 }
 
-pub async fn files(
-    mod_id: &str,
-    mc_version: Option<&str>,
-    loader: Option<ModLoader>,
-) -> Result<Vec<ResourceFile>> {
+pub async fn files(mod_id: &str, mc_version: Option<&str>, loader: Option<ModLoader>) -> Result<Vec<ResourceFile>> {
     let mut path = format!("/mods/{}/files?pageSize=50", urlencode(mod_id));
     if let Some(v) = mc_version {
         path += &format!("&gameVersion={}", urlencode(v));
@@ -158,10 +151,10 @@ pub async fn files_by_ids(ids: &[u64]) -> Result<Vec<ResourceFile>> {
 /// Resolve a download URL: field from the file listing, else GET download-url, else CDN fallback.
 pub async fn resolve_download_url(mod_id: &str, file_id: u64, file_name: &str) -> Result<String> {
     let path = format!("/mods/{}/files/{file_id}/download-url", urlencode(mod_id));
-    if let Ok(v) = send_json(client_req(reqwest::Method::GET, &path)?).await {
-        if let Some(u) = v["data"].as_str().filter(|x| !x.is_empty()) {
-            return Ok(u.to_string());
-        }
+    if let Ok(v) = send_json(client_req(reqwest::Method::GET, &path)?).await
+        && let Some(u) = v["data"].as_str().filter(|x| !x.is_empty())
+    {
+        return Ok(u.to_string());
     }
     Ok(fallback_download_url(file_id, file_name))
 }
@@ -192,10 +185,13 @@ mod tests {
 
     #[test]
     fn file_parsing() {
-        let v: Value = serde_json::from_str(r#"{"id":4001,"modId":238222,"displayName":"JEI 15","fileName":"jei-1.20.1.jar",
+        let v: Value = serde_json::from_str(
+            r#"{"id":4001,"modId":238222,"displayName":"JEI 15","fileName":"jei-1.20.1.jar",
           "releaseType":1,"gameVersions":["1.20.1","Forge","Client"],"downloadUrl":null,"fileLength":10,"fileDate":"2024-02-02T00:00:00Z",
           "hashes":[{"value":"abc","algo":1},{"value":"d","algo":2}],"fileFingerprint":123456,
-          "dependencies":[{"modId":9,"relationType":3}]}"#).unwrap();
+          "dependencies":[{"modId":9,"relationType":3}]}"#,
+        )
+        .unwrap();
         let f = parse_file(&v);
         assert_eq!(f.loaders, vec![ModLoader::Forge]);
         assert_eq!(f.game_versions, vec!["1.20.1"]);
@@ -208,9 +204,12 @@ mod tests {
 
     #[test]
     fn search_parsing() {
-        let v: Value = serde_json::from_str(r#"{"data":[{"id":1,"slug":"jei","name":"JEI","summary":"s","downloadCount":1e6,
+        let v: Value = serde_json::from_str(
+            r#"{"data":[{"id":1,"slug":"jei","name":"JEI","summary":"s","downloadCount":1e6,
           "logo":{"thumbnailUrl":"https://x/y.png"},"categories":[{"name":"Utility"}],"authors":[{"name":"mezz"}],
-          "links":{"websiteUrl":"https://www.curseforge.com/minecraft/mc-mods/jei"}}],"pagination":{"totalCount":3}}"#).unwrap();
+          "links":{"websiteUrl":"https://www.curseforge.com/minecraft/mc-mods/jei"}}],"pagination":{"totalCount":3}}"#,
+        )
+        .unwrap();
         let r = parse_search(&v);
         assert_eq!(r.total, 3);
         assert_eq!(r.hits[0].downloads, 1_000_000);
@@ -219,7 +218,10 @@ mod tests {
 
     #[test]
     fn fingerprint_matches() {
-        let v: Value = serde_json::from_str(r#"{"data":{"exactMatches":[{"id":1,"file":{"id":2,"modId":1,"fileName":"a.jar","fileFingerprint":77,"gameVersions":[]}}]}}"#).unwrap();
+        let v: Value = serde_json::from_str(
+            r#"{"data":{"exactMatches":[{"id":1,"file":{"id":2,"modId":1,"fileName":"a.jar","fileFingerprint":77,"gameVersions":[]}}]}}"#,
+        )
+        .unwrap();
         assert_eq!(parse_fingerprint_matches(&v)[0].0, 77);
     }
 }

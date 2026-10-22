@@ -131,7 +131,10 @@ mod tests {
         assert_eq!((mgr.cfg().source, mgr.cfg().concurrency), (Source::Official, 8));
         // download_set_config persists and survives a "restart"
         let new_dir = d.path().join("mc2");
-        persist_to(&store, &DownloadConfig { game_dir: new_dir.clone(), source: Source::OfficialFirst, concurrency: 5, segments: 2, retries: 4 });
+        persist_to(
+            &store,
+            &DownloadConfig { game_dir: new_dir.clone(), source: Source::OfficialFirst, concurrency: 5, segments: 2, retries: 4 },
+        );
         let again = SettingsStore::load(file).get();
         assert_eq!(again.download.version_source, DownloadSource::OfficialFirst);
         assert_eq!((again.download.thread_count, again.download.segments, again.download.retries), (5, 2, 4));

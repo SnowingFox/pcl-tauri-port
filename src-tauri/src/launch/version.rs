@@ -172,16 +172,16 @@ impl OsRule {
             if base != ctx.os_name {
                 return false;
             }
-            if let Some(a) = arch_suffix {
-                if !arch_eq(a, &ctx.arch) {
-                    return false;
-                }
-            }
-        }
-        if let Some(arch) = &self.arch {
-            if !arch_eq(arch, &ctx.arch) {
+            if let Some(a) = arch_suffix
+                && !arch_eq(a, &ctx.arch)
+            {
                 return false;
             }
+        }
+        if let Some(arch) = &self.arch
+            && !arch_eq(arch, &ctx.arch)
+        {
+            return false;
         }
         true
     }
@@ -198,10 +198,10 @@ fn arch_eq(rule_arch: &str, ctx_arch: &str) -> bool {
 
 impl Rule {
     fn matches(&self, ctx: &RuleContext) -> bool {
-        if let Some(os) = &self.os {
-            if !os.matches(ctx) {
-                return false;
-            }
+        if let Some(os) = &self.os
+            && !os.matches(ctx)
+        {
+            return false;
         }
         if let Some(features) = &self.features {
             for (k, want) in features {
@@ -294,10 +294,10 @@ impl Library {
     pub fn classpath_artifact(&self) -> Option<Artifact> {
         let rel = self.classpath_rel_path()?;
         let mut art = self.artifact().cloned().unwrap_or_default();
-        if art.url.is_none() {
-            if let Some(base) = &self.url {
-                art.url = Some(format!("{}/{}", base.trim_end_matches('/'), rel));
-            }
+        if art.url.is_none()
+            && let Some(base) = &self.url
+        {
+            art.url = Some(format!("{}/{}", base.trim_end_matches('/'), rel));
         }
         art.path = Some(rel);
         Some(art)
@@ -307,10 +307,7 @@ impl Library {
     pub fn native_artifact(&self, ctx: &RuleContext) -> Option<(String, Artifact)> {
         let cls = self.native_classifier(ctx)?;
         let art = self.downloads.as_ref().and_then(|d| d.classifiers.get(&cls)).cloned();
-        let rel = art
-            .as_ref()
-            .and_then(|a| a.path.clone())
-            .or_else(|| self.maven_rel_path(Some(&cls)))?;
+        let rel = art.as_ref().and_then(|a| a.path.clone()).or_else(|| self.maven_rel_path(Some(&cls)))?;
         let mut art = art.unwrap_or_default();
         art.path = Some(rel.clone());
         Some((rel, art))
@@ -349,17 +346,13 @@ pub fn parse_version_json(text: &str) -> Result<VersionJson, LaunchError> {
 pub fn resolve_version(minecraft_dir: &Path, id: &str) -> Result<ResolvedVersion, LaunchError> {
     resolve_with(id, &|vid| {
         let p = version_json_path(minecraft_dir, vid);
-        let text = std::fs::read_to_string(&p)
-            .map_err(|e| LaunchError::VersionJson(format!("{}: {e}", p.display())))?;
+        let text = std::fs::read_to_string(&p).map_err(|e| LaunchError::VersionJson(format!("{}: {e}", p.display())))?;
         parse_version_json(&text)
     })
 }
 
 /// Loader-injected variant used by tests.
-pub fn resolve_with(
-    id: &str,
-    load: &dyn Fn(&str) -> Result<VersionJson, LaunchError>,
-) -> Result<ResolvedVersion, LaunchError> {
+pub fn resolve_with(id: &str, load: &dyn Fn(&str) -> Result<VersionJson, LaunchError>) -> Result<ResolvedVersion, LaunchError> {
     let mut chain: Vec<VersionJson> = Vec::new();
     let mut seen = HashSet::new();
     let mut cur = id.to_string();
@@ -478,11 +471,7 @@ mod tests {
     use super::*;
 
     fn ctx(os: &str, arch: &str, feats: &[(&str, bool)]) -> RuleContext {
-        RuleContext {
-            os_name: os.into(),
-            arch: arch.into(),
-            features: feats.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
-        }
+        RuleContext { os_name: os.into(), arch: arch.into(), features: feats.iter().map(|(k, v)| (k.to_string(), *v)).collect() }
     }
 
     fn rule(json: &str) -> Vec<Rule> {
@@ -496,15 +485,9 @@ mod tests {
         assert!(rules_allow(&rule(r#"[{"action":"allow"}]"#), &c));
         assert!(!rules_allow(&rule(r#"[{"action":"allow","os":{"name":"windows"}}]"#), &c));
         // allow all, then disallow osx
-        assert!(!rules_allow(
-            &rule(r#"[{"action":"allow"},{"action":"disallow","os":{"name":"osx"}}]"#),
-            &c
-        ));
+        assert!(!rules_allow(&rule(r#"[{"action":"allow"},{"action":"disallow","os":{"name":"osx"}}]"#), &c));
         assert!(rules_allow(&rule(r#"[{"action":"allow","os":{"name":"osx","arch":"arm64"}}]"#), &c));
-        assert!(!rules_allow(
-            &rule(r#"[{"action":"allow","os":{"name":"osx","arch":"arm64"}}]"#),
-            &ctx("osx", "x64", &[])
-        ));
+        assert!(!rules_allow(&rule(r#"[{"action":"allow","os":{"name":"osx","arch":"arm64"}}]"#), &ctx("osx", "x64", &[])));
         assert!(!rules_allow(&rule(r#"[{"action":"allow","os":{"arch":"x86"}}]"#), &c));
         assert!(rules_allow(&rule(r#"[{"action":"allow","os":{"name":"osx-arm64"}}]"#), &c));
     }
@@ -554,10 +537,7 @@ mod tests {
         assert_eq!(v.libraries[1].classpath_rel_path().unwrap(), "com/google/guava/guava/15.0/guava-15.0.jar");
 
         let l = Library { name: "net.minecraftforge:fmlloader:1.20.1-47.2.0".into(), ..Default::default() };
-        assert_eq!(
-            l.classpath_rel_path().unwrap(),
-            "net/minecraftforge/fmlloader/1.20.1-47.2.0/fmlloader-1.20.1-47.2.0.jar"
-        );
+        assert_eq!(l.classpath_rel_path().unwrap(), "net/minecraftforge/fmlloader/1.20.1-47.2.0/fmlloader-1.20.1-47.2.0.jar");
         let l = Library { name: "a.b:c:1.0:natives-macos@zip".into(), ..Default::default() };
         assert_eq!(l.classpath_rel_path().unwrap(), "a/b/c/1.0/c-1.0-natives-macos.zip");
         assert_eq!(l.key(), "a.b:c:natives-macos");

@@ -8,13 +8,7 @@ use std::path::{Path, PathBuf};
 pub enum AccountKind {
     Offline { name: String, uuid: String },
     Microsoft { name: String, uuid: String },
-    Yggdrasil {
-        name: String,
-        uuid: String,
-        server_url: String,
-        server_name: String,
-        identifier: String,
-    },
+    Yggdrasil { name: String, uuid: String, server_url: String, server_name: String, identifier: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,14 +41,9 @@ impl StoredAccount {
         let (kind, name, uuid, url, sname, ident) = match &self.kind {
             AccountKind::Offline { name, uuid } => ("offline", name, uuid, None, None, None),
             AccountKind::Microsoft { name, uuid } => ("microsoft", name, uuid, None, None, None),
-            AccountKind::Yggdrasil { name, uuid, server_url, server_name, identifier } => (
-                "yggdrasil",
-                name,
-                uuid,
-                Some(server_url.clone()),
-                Some(server_name.clone()),
-                Some(identifier.clone()),
-            ),
+            AccountKind::Yggdrasil { name, uuid, server_url, server_name, identifier } => {
+                ("yggdrasil", name, uuid, Some(server_url.clone()), Some(server_name.clone()), Some(identifier.clone()))
+            }
         };
         AccountInfo {
             id: self.id.clone(),
@@ -85,6 +74,12 @@ pub fn save(dir: &Path, data: &StoreData) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join("accounts.json.tmp");
     std::fs::write(&tmp, serde_json::to_vec_pretty(data)?)?;
+    // Owner-only: the file lists account names, UUIDs and server URLs (tokens live in the Keychain).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    }
     std::fs::rename(tmp, file_path(dir))?;
     Ok(())
 }
@@ -97,20 +92,25 @@ mod tests {
     fn roundtrip_has_no_tokens() {
         let dir = std::env::temp_dir().join(format!("pcl-acc-{}", uuid::Uuid::new_v4()));
         let mut d = StoreData::default();
-        d.accounts.push(StoredAccount {
-            id: "1".into(),
-            kind: AccountKind::Offline { name: "A".into(), uuid: "u".into() },
-        });
-        d.accounts.push(StoredAccount {
-            id: "2".into(),
-            kind: AccountKind::Microsoft { name: "B".into(), uuid: "v".into() },
-        });
+        d.accounts.push(StoredAccount { id: "1".into(), kind: AccountKind::Offline { name: "A".into(), uuid: "u".into() } });
+        d.accounts.push(StoredAccount { id: "2".into(), kind: AccountKind::Microsoft { name: "B".into(), uuid: "v".into() } });
         save(&dir, &d).unwrap();
         let raw = std::fs::read_to_string(file_path(&dir)).unwrap();
         assert!(!raw.to_lowercase().contains("token"));
         let l = load(&dir).unwrap();
         assert_eq!(l.accounts.len(), 2);
         assert_eq!(l.accounts[1].info().kind, "microsoft");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn accounts_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("pcl-acc-perm-{}", uuid::Uuid::new_v4()));
+        save(&dir, &StoreData::default()).unwrap();
+        let mode = std::fs::metadata(file_path(&dir)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
         std::fs::remove_dir_all(dir).ok();
     }
 

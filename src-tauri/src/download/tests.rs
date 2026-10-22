@@ -1,10 +1,10 @@
 //! Engine tests against a local mock HTTP server (supports Range, failures, slow bodies).
 
 use super::engine::*;
-use super::hash::{hex_of, HashKind};
+use super::hash::{HashKind, hex_of};
 use super::mirror::Source;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -67,7 +67,9 @@ fn payload(n: usize) -> Vec<u8> {
     (0..n).map(|i| (i * 31 % 251) as u8).collect()
 }
 
-fn setup() -> (reqwest::Client, EngineConfig, TaskCtl, Arc<Tracker>, Arc<std::sync::Mutex<Vec<ProgressEvent>>>) {
+type Events = Arc<std::sync::Mutex<Vec<ProgressEvent>>>;
+
+fn setup() -> (reqwest::Client, EngineConfig, TaskCtl, Arc<Tracker>, Events) {
     let events = Arc::new(std::sync::Mutex::new(vec![]));
     let e2 = events.clone();
     let ctl = TaskCtl::new();
@@ -97,7 +99,8 @@ async fn segmented_download_matches() {
     let d = tempfile::tempdir().unwrap();
     let dest = d.path().join("big.bin");
     tr.begin_stage("s", 0.0, 1.0, 1, data.len() as u64);
-    let spec = FileSpec::new(format!("{}/data", m.base), &dest).with_size(Some(data.len() as u64)).with_sha1(Some(hex_of(HashKind::Sha1, &data)));
+    let spec =
+        FileSpec::new(format!("{}/data", m.base), &dest).with_size(Some(data.len() as u64)).with_sha1(Some(hex_of(HashKind::Sha1, &data)));
     download_file(&c, &cfg, &spec, &ctl, &tr).await.unwrap();
     assert_eq!(std::fs::read(&dest).unwrap(), data);
     assert!(m.hits.load(Ordering::SeqCst) >= 4, "expected multiple range requests");

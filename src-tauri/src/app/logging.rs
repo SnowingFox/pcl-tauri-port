@@ -105,9 +105,8 @@ pub fn init(dir: &Path, debug: bool) {
     let default = if debug { "info,pcl_tauri_port_lib=debug" } else { "info" };
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
     let file_layer = tracing_subscriber::fmt::layer().with_ansi(false).with_writer(writer);
-    let stderr_layer = cfg!(debug_assertions).then(|| {
-        tracing_subscriber::fmt::layer().with_ansi(false).with_writer(|| MaskingWriter(std::io::stderr()))
-    });
+    let stderr_layer =
+        cfg!(debug_assertions).then(|| tracing_subscriber::fmt::layer().with_ansi(false).with_writer(|| MaskingWriter(std::io::stderr())));
     let _ = tracing_subscriber::registry().with(filter).with(file_layer).with(stderr_layer).try_init();
     install_panic_hook(dir.to_path_buf());
     tracing::info!(version = env!("CARGO_PKG_VERSION"), dir = %dir.display(), "logging initialised");
@@ -127,10 +126,7 @@ pub(crate) fn install_panic_hook(dir: PathBuf) {
         let loc = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
         let bt = std::backtrace::Backtrace::force_capture();
         let thread = std::thread::current();
-        let report = mask(&format!(
-            "panic in thread '{}' at {loc}: {payload}\n{bt}",
-            thread.name().unwrap_or("<unnamed>")
-        ));
+        let report = mask(&format!("panic in thread '{}' at {loc}: {payload}\n{bt}", thread.name().unwrap_or("<unnamed>")));
         tracing::error!(target: "panic", "{report}");
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("panic.log")) {
             let _ = writeln!(f, "[{}] {report}", unix_ts());

@@ -1,16 +1,16 @@
 //! `app_install_game`: vanilla / Fabric / Quilt / Forge / NeoForge into the selected game folder,
 //! optionally under a custom instance name.
 
-use super::error::{into_task_error, AppError, AppResult};
-use super::tuning;
 use super::AppCtx;
+use super::error::{AppError, AppResult, into_task_error};
+use super::tuning;
 use crate::download::error::{DlError, DlResult};
 use crate::download::{DownloadConfig, Manager, SpawnOpts, TaskCtx};
 use crate::install::{forge, loaders, vanilla};
 use crate::instances::detect::validate_name;
 use crate::settings::store::SettingsStore;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -41,7 +41,13 @@ pub fn instance_exists(root: &Path, name: &str) -> bool {
 }
 
 /// Install `mc` (+ loader) under `ctx.cfg.game_dir`; returns the id of the version that was produced.
-pub async fn install_version(t: &TaskCtx, mgr: &Arc<Manager>, mc: &str, loader: Option<&LoaderChoice>, java: Option<String>) -> DlResult<String> {
+pub async fn install_version(
+    t: &TaskCtx,
+    mgr: &Arc<Manager>,
+    mc: &str,
+    loader: Option<&LoaderChoice>,
+    java: Option<String>,
+) -> DlResult<String> {
     let Some(l) = loader else {
         vanilla::install_vanilla(t, mgr, mc, 0.0, 1.0).await?;
         return Ok(mc.to_string());
@@ -85,7 +91,8 @@ pub fn finalize_name(root: &Path, produced: &str, name: &str, vanilla_pre_existe
     }
     std::fs::create_dir_all(&to)?;
     let inherits = {
-        let v: Value = serde_json::from_slice(&std::fs::read(vanilla::version_json_path(root, produced))?).map_err(std::io::Error::other)?;
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(vanilla::version_json_path(root, produced))?).map_err(std::io::Error::other)?;
         v["inheritsFrom"].as_str().is_some_and(|s| !s.is_empty())
     };
     let move_files = inherits || !vanilla_pre_existed;
@@ -127,12 +134,7 @@ pub fn register_instance(settings: &SettingsStore, root: &Path, name: &str) {
 }
 
 /// Java for the Forge/NeoForge processors (they execute jars).
-pub async fn java_for_processors(
-    discover: &super::Discover,
-    settings: &SettingsStore,
-    mc: &str,
-    root: &Path,
-) -> AppResult<String> {
+pub async fn java_for_processors(discover: &super::Discover, settings: &SettingsStore, mc: &str, root: &Path) -> AppResult<String> {
     let required = crate::java::default_major_for_mc(mc);
     let extra = [root.join("runtime")];
     let d = discover.clone();
@@ -142,7 +144,12 @@ pub async fn java_for_processors(
 }
 
 /// Start the install task and return its id.
-pub async fn install_game(ctx: &AppCtx, mc_version: String, loader: Option<LoaderChoice>, instance_name: Option<String>) -> AppResult<String> {
+pub async fn install_game(
+    ctx: &AppCtx,
+    mc_version: String,
+    loader: Option<LoaderChoice>,
+    instance_name: Option<String>,
+) -> AppResult<String> {
     validate_name(&mc_version).map_err(AppError::invalid)?;
     if let Some(l) = &loader {
         validate_loader(l)?;
@@ -157,7 +164,9 @@ pub async fn install_game(ctx: &AppCtx, mc_version: String, loader: Option<Loade
         }
     }
     let java = match &loader {
-        Some(l) if l.kind == "forge" || l.kind == "neoforge" => Some(java_for_processors(&ctx.discover, ctx.settings, &mc_version, &root).await?),
+        Some(l) if l.kind == "forge" || l.kind == "neoforge" => {
+            Some(java_for_processors(&ctx.discover, ctx.settings, &mc_version, &root).await?)
+        }
         _ => None,
     };
     let cfg = DownloadConfig { game_dir: root.clone(), ..ctx.mgr.cfg() };

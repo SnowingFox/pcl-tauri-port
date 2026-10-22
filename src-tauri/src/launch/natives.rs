@@ -1,7 +1,7 @@
 //! Natives extraction and library presence checks.
 
 use super::version::*;
-use super::{args::classpath_libraries, LaunchError};
+use super::{LaunchError, args::classpath_libraries};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -28,11 +28,7 @@ fn extract_jar(jar: &Path, dest: &Path, exclude: &[String], only_native_libs: bo
             continue;
         }
         // Flatten for new-style natives (libs may live in subfolders like macos/arm64/org/lwjgl/).
-        let out = if only_native_libs {
-            dest.join(rel.file_name().unwrap_or_default())
-        } else {
-            dest.join(&rel)
-        };
+        let out = if only_native_libs { dest.join(rel.file_name().unwrap_or_default()) } else { dest.join(&rel) };
         if let Some(p) = out.parent() {
             fs::create_dir_all(p).map_err(|e| LaunchError::Io(e.to_string()))?;
         }
@@ -52,10 +48,10 @@ pub fn native_jars(v: &ResolvedVersion, libraries_dir: &Path, ctx: &RuleContext)
         if let Some((rel, _)) = lib.native_artifact(ctx) {
             let excl = lib.extract.as_ref().map(|e| e.exclude.clone()).unwrap_or_default();
             out.push((libraries_dir.join(rel), excl, false));
-        } else if lib.is_new_style_native() {
-            if let Some(rel) = lib.classpath_rel_path() {
-                out.push((libraries_dir.join(rel), vec![], true));
-            }
+        } else if lib.is_new_style_native()
+            && let Some(rel) = lib.classpath_rel_path()
+        {
+            out.push((libraries_dir.join(rel), vec![], true));
         }
     }
     out

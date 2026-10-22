@@ -1,21 +1,20 @@
 mod accounts;
 mod app;
-mod java;
-mod launch;
 mod crash;
-mod instances;
-mod settings;
 mod download;
 mod install;
+mod instances;
+mod java;
+mod launch;
 mod modpack;
 mod resources;
+mod settings;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .setup(|app| {
-            app::setup(app.handle())
-        })
+        .setup(|app| app::setup(app.handle()))
+        .plugin(settings::guard::navigation_guard())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             app::commands::app_launch,

@@ -36,10 +36,16 @@ fn simple_game_log_rules() {
         ("1282: Invalid operation", Reason::OpenGl1282),
         ("Maybe try a lower resolution resourcepack?", Reason::TextureTooLarge),
         ("Invalid module name: '' is not a Java identifier", Reason::ModNameSpecialChars),
-        ("java.lang.RuntimeException: Shaders Mod detected. Please remove it, OptiFine has built-in support for shaders.", Reason::ShadersModWithOptiFine),
+        (
+            "java.lang.RuntimeException: Shaders Mod detected. Please remove it, OptiFine has built-in support for shaders.",
+            Reason::ShadersModWithOptiFine,
+        ),
         ("Found multiple arguments for option fml.forgeVersion, but you asked for only one", Reason::MultipleForgeInJson),
         ("java.lang.NoSuchMethodError: sun.security.util.ManifestEntryVerifier.<init>", Reason::OldForgeNewJava),
-        ("java.lang.NoSuchMethodError: 'void net.minecraft.client.renderer.texture.SpriteContents.<init>(", Reason::OptiFineForgeIncompatible),
+        (
+            "java.lang.NoSuchMethodError: 'void net.minecraft.client.renderer.texture.SpriteContents.<init>(",
+            Reason::OptiFineForgeIncompatible,
+        ),
         ("Unable to locate a Java Runtime", Reason::JavaMissing),
         ("dlopen(liblwjgl.dylib): mach-o file, but is an incompatible architecture (have 'x86_64', need 'arm64')", Reason::MacArchMismatch),
         ("GLFW error: GLFW may only be used on the main thread", Reason::MacMissingStartOnFirstThread),
@@ -120,10 +126,7 @@ fn suspected_mods_resolve_to_jar_names() {
 fn stack_analysis_finds_keywords_in_loader_crashes() {
     let crash = "---- Minecraft Crash Report ----\nForge\nDescription: Ticking\njava.lang.NullPointerException\n\tat com.coolmod.cool.Thing.run(Thing.java:10)\n\tat net.minecraft.Foo.bar(Foo.java:1)\nSystem Details";
     let r = analyze_logs(&Logs { crash: Some(crash.into()), ..Default::default() });
-    assert!(
-        matches!(r.first().map(|x| x.0), Some(Reason::StackKeywords) | Some(Reason::StackModNames)),
-        "{r:?}"
-    );
+    assert!(matches!(r.first().map(|x| x.0), Some(Reason::StackKeywords) | Some(Reason::StackModNames)), "{r:?}");
 }
 
 #[test]
@@ -169,13 +172,51 @@ fn formatted_result_has_chinese_message_and_actions() {
 fn every_reason_has_a_message() {
     use Reason::*;
     let all = [
-        JvmArgsInvalid, ModsExtracted, MixinBootstrapMissing, OutOfMemory, UsingJdk, GraphicsNoOpenGl, UsingOpenJ9,
-        JavaTooNew, JavaIncompatible, ModNameSpecialChars, GraphicsPixelFormat, TinyOutput, PlayerTriggeredCrash,
-        OpenGl1282, SignatureMismatch, ModCertain, ModSuspected, ModConfigBroken, ModMixinFailed, ModLoaderError,
-        ModInitFailed, StackKeywords, StackModNames, OptiFineWorldLoad, BlockCrash, EntityCrash, TextureTooLarge,
-        NoLogs, ModDuplicate, ModIncompatible, OptiFineForgeIncompatible, FabricError, FabricSolution, ForgeError,
-        OldForgeNewJava, MultipleForgeInJson, TooManyMods, NightConfigBug, ShadersModWithOptiFine, ForgeIncomplete,
-        ModNeedsJava11, ModMissingDependency, JavaMissing, MacMissingStartOnFirstThread, MacArchMismatch,
+        JvmArgsInvalid,
+        ModsExtracted,
+        MixinBootstrapMissing,
+        OutOfMemory,
+        UsingJdk,
+        GraphicsNoOpenGl,
+        UsingOpenJ9,
+        JavaTooNew,
+        JavaIncompatible,
+        ModNameSpecialChars,
+        GraphicsPixelFormat,
+        TinyOutput,
+        PlayerTriggeredCrash,
+        OpenGl1282,
+        SignatureMismatch,
+        ModCertain,
+        ModSuspected,
+        ModConfigBroken,
+        ModMixinFailed,
+        ModLoaderError,
+        ModInitFailed,
+        StackKeywords,
+        StackModNames,
+        OptiFineWorldLoad,
+        BlockCrash,
+        EntityCrash,
+        TextureTooLarge,
+        NoLogs,
+        ModDuplicate,
+        ModIncompatible,
+        OptiFineForgeIncompatible,
+        FabricError,
+        FabricSolution,
+        ForgeError,
+        OldForgeNewJava,
+        MultipleForgeInJson,
+        TooManyMods,
+        NightConfigBug,
+        ShadersModWithOptiFine,
+        ForgeIncomplete,
+        ModNeedsJava11,
+        ModMissingDependency,
+        JavaMissing,
+        MacMissingStartOnFirstThread,
+        MacArchMismatch,
     ];
     let mut seen = std::collections::HashSet::new();
     for r in all {

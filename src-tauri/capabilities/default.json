@@ -1,10 +1,19 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Main window, least privilege. App commands (accounts_*, app_*, ...) are not plugin permissions and need no entry here. File and URL access goes through validated Rust commands, so there is deliberately no opener, fs, shell or dialog permission. If the frontend needs another window API, add the single matching core:window:allow-* line, not core:default.",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "opener:default"
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-set-title",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-minimize",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
+    "core:window:allow-close"
   ]
 }

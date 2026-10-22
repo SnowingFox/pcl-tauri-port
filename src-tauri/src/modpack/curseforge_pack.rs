@@ -12,9 +12,14 @@ pub fn parse(text: &str, base: &str) -> Result<ModpackInstallPlan, String> {
         if id.contains("recommended") {
             return Err("this modpack is too old (uses 'recommended' loader versions) and is unsupported".into());
         }
-        let parsed = [("forge-", ModLoader::Forge), ("neoforge-", ModLoader::NeoForge), ("fabric-", ModLoader::Fabric), ("quilt-", ModLoader::Quilt)]
-            .into_iter()
-            .find_map(|(p, ml)| id.strip_prefix(p).map(|ver| LoaderSpec { loader: ml, version: ver.to_string() }));
+        let parsed = [
+            ("forge-", ModLoader::Forge),
+            ("neoforge-", ModLoader::NeoForge),
+            ("fabric-", ModLoader::Fabric),
+            ("quilt-", ModLoader::Quilt),
+        ]
+        .into_iter()
+        .find_map(|(p, ml)| id.strip_prefix(p).map(|ver| LoaderSpec { loader: ml, version: ver.to_string() }));
         match parsed {
             Some(s) => loaders.push(s),
             None => warnings.push(format!("unsupported loader: {id}")),
@@ -72,17 +77,21 @@ pub async fn resolve(plan: &mut ModpackInstallPlan) -> Result<Vec<CurseForgeRef>
 }
 
 pub fn apply_resolved(plan: &mut ModpackInstallPlan, found: Vec<ResourceFile>) -> Vec<CurseForgeRef> {
-    let by_id: std::collections::HashMap<u64, &ResourceFile> =
-        found.iter().filter_map(|f| f.id.parse().ok().map(|i| (i, f))).collect();
+    let by_id: std::collections::HashMap<u64, &ResourceFile> = found.iter().filter_map(|f| f.id.parse().ok().map(|i| (i, f))).collect();
     let mut missing = vec![];
     let mut seen = std::collections::HashSet::new();
     let mut kept = vec![];
     for mut pf in std::mem::take(&mut plan.files) {
-        let Some(r) = pf.curseforge.clone() else { kept.push(pf); continue };
+        let Some(r) = pf.curseforge.clone() else {
+            kept.push(pf);
+            continue;
+        };
         if !seen.insert(r.file_id) {
             continue; // CurseForge sometimes lists duplicates
         }
-        let Some(rf) = by_id.get(&r.file_id) else {
+        // `fileName` comes from the API: it becomes a path below the instance, so it must be a
+        // single plain component. Anything else is reported like a file that no longer exists.
+        let Some(rf) = by_id.get(&r.file_id).filter(|rf| crate::settings::guard::is_safe_component(&rf.file_name)) else {
             missing.push(r);
             continue;
         };
@@ -108,9 +117,23 @@ mod tests {
       "name":"CF Pack","version":"3","overrides":"overrides","files":[{"projectID":1,"fileID":10,"required":true},{"projectID":2,"fileID":20,"required":false},{"projectID":3,"fileID":30},{"projectID":9}]}"#;
 
     fn rf(id: u64, name: &str) -> ResourceFile {
-        ResourceFile { platform: Platform::CurseForge, id: id.to_string(), project_id: "1".into(), name: name.into(), file_name: name.into(),
-            version_number: None, release_type: "release".into(), game_versions: vec![], loaders: vec![], sha1: Some("h".into()), size: 5,
-            download_urls: vec![], date_published: String::new(), dependencies: vec![], fingerprint: None }
+        ResourceFile {
+            platform: Platform::CurseForge,
+            id: id.to_string(),
+            project_id: "1".into(),
+            name: name.into(),
+            file_name: name.into(),
+            version_number: None,
+            release_type: "release".into(),
+            game_versions: vec![],
+            loaders: vec![],
+            sha1: Some("h".into()),
+            size: 5,
+            download_urls: vec![],
+            date_published: String::new(),
+            dependencies: vec![],
+            fingerprint: None,
+        }
     }
 
     #[test]
@@ -126,6 +149,16 @@ mod tests {
         assert_eq!(p.files[0].path, "mods/a.jar");
         assert_eq!(p.files[1].path, "resourcepacks/pack.zip");
         assert!(p.files[0].urls[0].starts_with("https://edge.forgecdn.net/files/0/10/"));
+    }
+
+    #[test]
+    fn hostile_api_file_names_are_not_installed() {
+        let mut p = parse(MF, "").unwrap();
+        let missing = apply_resolved(&mut p, vec![rf(10, "../../../../.zshrc"), rf(20, "ok.zip"), rf(30, "a/b.jar")]);
+        // 10 and 30 carry path separators and are treated like files that no longer exist upstream.
+        assert_eq!(missing.iter().map(|m| m.file_id).collect::<Vec<_>>(), vec![10, 30]);
+        assert_eq!(p.files.len(), 1);
+        assert_eq!(p.files[0].path, "resourcepacks/ok.zip");
     }
 
     #[test]

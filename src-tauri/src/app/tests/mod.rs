@@ -15,7 +15,7 @@ use crate::download::TaskInfo;
 use crate::java::JavaInfo;
 use crate::resources::hash::sha1_hex;
 use crate::resources::types::{Platform, ResourceFile};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use wiremock::matchers::{method, path};
@@ -88,7 +88,11 @@ impl Harness {
             if let Some(v) = self.names(event).into_iter().next_back() {
                 return v;
             }
-            assert!(std::time::Instant::now() < deadline, "timed out waiting for {event}; got {:?}", self.events.lock().unwrap().iter().map(|e| e.0.clone()).collect::<Vec<_>>());
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for {event}; got {:?}",
+                self.events.lock().unwrap().iter().map(|e| e.0.clone()).collect::<Vec<_>>()
+            );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
@@ -114,7 +118,10 @@ impl Harness {
     pub async fn wait_game_line(&self, needle: &str, secs: u64) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
         loop {
-            let seen = self.names("launch://log").iter().any(|e| e["stream"] != "launcher" && e["line"].as_str().is_some_and(|l| l.contains(needle)));
+            let seen = self
+                .names("launch://log")
+                .iter()
+                .any(|e| e["stream"] != "launcher" && e["line"].as_str().is_some_and(|l| l.contains(needle)));
             if seen {
                 return;
             }
@@ -160,7 +167,15 @@ pub fn fake_java(dir: &Path, name: &str, body: &str) -> JavaInfo {
     std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
     let arch = if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" };
     std::fs::write(home.join("release"), format!("JAVA_VERSION=\"21.0.1\"\nIMPLEMENTOR=\"Fake\"\nOS_ARCH=\"{arch}\"\n")).unwrap();
+    crate::java::test_java::allow(&exe);
     crate::java::inspect(&exe).expect("fake java must be inspectable")
+}
+
+/// A wiremock server whose loopback address the SSRF policy is told to accept (tests only).
+pub async fn mock_server() -> MockServer {
+    let server = MockServer::start().await;
+    crate::settings::guard::test_servers::allow(&server.uri());
+    server
 }
 
 pub const OK_JAVA: &str = r#"for a in "$@"; do echo "ARG:$a"; done
@@ -179,7 +194,7 @@ fn sha(b: &[u8]) -> String {
 
 /// Serve a tiny vanilla version `id`: manifest, version json, client jar, one library, empty asset index.
 pub async fn serve_vanilla(id: &str) -> Served {
-    let server = MockServer::start().await;
+    let server = mock_server().await;
     let base = server.uri();
     let client_jar = format!("client-jar-bytes-{id}").into_bytes();
     let lib_jar = b"library-jar-bytes".to_vec();
@@ -226,10 +241,21 @@ pub fn write_version_json(root: &Path, id: &str, json: &str) {
 
 pub fn resource_file(project: &str, id: &str, name: &str, url: Option<String>, body: &[u8]) -> ResourceFile {
     ResourceFile {
-        platform: Platform::Modrinth, id: id.into(), project_id: project.into(), name: name.into(), file_name: name.into(), version_number: None,
-        release_type: "release".into(), game_versions: vec!["1.20.1".into()], loaders: vec![crate::resources::types::ModLoader::Fabric],
-        sha1: Some(sha(body)), size: body.len() as u64, download_urls: url.into_iter().collect(), date_published: "2024-01-01T00:00:00Z".into(),
-        dependencies: vec![], fingerprint: None,
+        platform: Platform::Modrinth,
+        id: id.into(),
+        project_id: project.into(),
+        name: name.into(),
+        file_name: name.into(),
+        version_number: None,
+        release_type: "release".into(),
+        game_versions: vec!["1.20.1".into()],
+        loaders: vec![crate::resources::types::ModLoader::Fabric],
+        sha1: Some(sha(body)),
+        size: body.len() as u64,
+        download_urls: url.into_iter().collect(),
+        date_published: "2024-01-01T00:00:00Z".into(),
+        dependencies: vec![],
+        fingerprint: None,
     }
 }
 
@@ -244,7 +270,13 @@ pub struct FakeApi {
 
 #[async_trait::async_trait]
 impl resource::ResourceApi for FakeApi {
-    async fn versions(&self, _: Platform, p: &str, _: Option<&str>, _: Option<crate::resources::types::ModLoader>) -> Result<Vec<ResourceFile>, String> {
+    async fn versions(
+        &self,
+        _: Platform,
+        p: &str,
+        _: Option<&str>,
+        _: Option<crate::resources::types::ModLoader>,
+    ) -> Result<Vec<ResourceFile>, String> {
         Ok(self.versions.lock().unwrap().get(p).cloned().unwrap_or_default())
     }
     async fn version(&self, _: Platform, id: &str) -> Result<ResourceFile, String> {

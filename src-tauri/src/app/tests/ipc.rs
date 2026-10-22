@@ -3,17 +3,25 @@
 
 use super::*;
 use crate::app::commands::*;
-use tauri::ipc::{CallbackFn, InvokeBody};
-use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_KEY};
-use tauri::webview::InvokeRequest;
 use tauri::WebviewWindow;
+use tauri::ipc::{CallbackFn, InvokeBody};
+use tauri::test::{INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets};
+use tauri::webview::InvokeRequest;
 
 fn app_for(h: &Harness) -> (tauri::App<MockRuntime>, WebviewWindow<MockRuntime>) {
     let app = mock_builder()
         .manage(Arc::new(h.ctx.clone()))
         .invoke_handler(tauri::generate_handler![
-            app_launch, app_launch_kill, app_install_game, app_install_resource, app_install_modpack, app_instance_mods, app_instance_saves,
-            app_modpack_report, app_data_dirs, app_open_url,
+            app_launch,
+            app_launch_kill,
+            app_install_game,
+            app_install_resource,
+            app_install_modpack,
+            app_instance_mods,
+            app_instance_saves,
+            app_modpack_report,
+            app_data_dirs,
+            app_open_url,
         ])
         .build(mock_context(noop_assets()))
         .unwrap();
@@ -68,15 +76,29 @@ fn commands_use_camel_case_args_and_typed_errors() {
     assert_eq!(e["code"], "INVALID_ARGUMENT");
 
     // exactly the JSON the frontend (src/api/resources.ts, download.ts) sends
-    let e = call(&w, "app_install_resource", json!({"platform": "modrinth", "projectId": "mOgUt4GM", "versionId": null, "kind": "mod", "instanceId": "ghost"})).unwrap_err();
+    let e = call(
+        &w,
+        "app_install_resource",
+        json!({"platform": "modrinth", "projectId": "mOgUt4GM", "versionId": null, "kind": "mod", "instanceId": "ghost"}),
+    )
+    .unwrap_err();
     assert_eq!(e["code"], "INSTANCE_NOT_FOUND", "args deserialised, failure comes from the instance lookup: {e}");
-    let e = call(&w, "app_install_resource", json!({"platform": "curseforge", "projectId": "1", "kind": "datapack", "instanceId": "1.20.1"})).unwrap_err();
+    let e =
+        call(&w, "app_install_resource", json!({"platform": "curseforge", "projectId": "1", "kind": "datapack", "instanceId": "1.20.1"}))
+            .unwrap_err();
     assert_eq!(e["code"], "INVALID_ARGUMENT", "datapack without worldName");
-    let e = call(&w, "app_install_resource", json!({"platform": "gitlab", "projectId": "1", "kind": "mod", "instanceId": "x"})).unwrap_err();
+    let e =
+        call(&w, "app_install_resource", json!({"platform": "gitlab", "projectId": "1", "kind": "mod", "instanceId": "x"})).unwrap_err();
     assert!(e.to_string().contains("platform") || e.to_string().contains("variant"), "unknown platform is a deserialisation error: {e}");
-    let e = call(&w, "app_install_modpack", json!({"source": {"type": "file", "path": "/no/such/pack.mrpack"}, "instanceName": "P"})).unwrap_err();
+    let e = call(&w, "app_install_modpack", json!({"source": {"type": "file", "path": "/no/such/pack.mrpack"}, "instanceName": "P"}))
+        .unwrap_err();
     assert_eq!(e["code"], "INVALID_ARGUMENT");
-    let e = call(&w, "app_install_modpack", json!({"source": {"type": "project", "platform": "modrinth", "projectId": "../x", "versionId": null}, "instanceName": "P"})).unwrap_err();
+    let e = call(
+        &w,
+        "app_install_modpack",
+        json!({"source": {"type": "project", "platform": "modrinth", "projectId": "../x", "versionId": null}, "instanceName": "P"}),
+    )
+    .unwrap_err();
     assert_eq!(e["code"], "INVALID_ARGUMENT");
     let e = call(&w, "app_open_url", json!({"url": "file:///etc/passwd"}));
     assert!(e.is_err(), "non-http urls are rejected over IPC too");

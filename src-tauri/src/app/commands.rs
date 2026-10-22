@@ -4,7 +4,7 @@ use super::error::{AppError, AppResult};
 use super::install::LoaderChoice;
 use super::modpack::ModpackSource;
 use super::resource::{LiveApi, ResourceRequest};
-use super::{instance, saves, AppCtx};
+use super::{AppCtx, instance, saves};
 use crate::resources::local_mods::{self, LocalMod};
 use crate::resources::types::{Platform, ResourceKind};
 use serde::Serialize;
@@ -42,7 +42,12 @@ pub fn app_launch_kill(launch_id: String) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub async fn app_install_game(ctx: Ctx<'_>, mc_version: String, loader: Option<LoaderChoice>, instance_name: Option<String>) -> AppResult<TaskStarted> {
+pub async fn app_install_game(
+    ctx: Ctx<'_>,
+    mc_version: String,
+    loader: Option<LoaderChoice>,
+    instance_name: Option<String>,
+) -> AppResult<TaskStarted> {
     let task_id = super::install::install_game(&ctx, mc_version, loader, instance_name).await?;
     Ok(TaskStarted { task_id })
 }
@@ -123,11 +128,7 @@ pub fn check_reveal(roots: &[PathBuf], path: &Path) -> AppResult<PathBuf> {
         return Err(AppError::invalid("需要绝对路径"));
     }
     let real = path.canonicalize().map_err(|_| AppError::new("NOT_FOUND", format!("路径不存在：{}", path.display())))?;
-    if roots.iter().any(|r| real.starts_with(r)) {
-        Ok(real)
-    } else {
-        Err(AppError::forbidden(path))
-    }
+    if roots.iter().any(|r| real.starts_with(r)) { Ok(real) } else { Err(AppError::forbidden(path)) }
 }
 
 #[tauri::command]
@@ -160,8 +161,17 @@ mod tests {
             assert!(validate_url(ok).is_ok(), "{ok}");
         }
         for bad in [
-            "file:///etc/passwd", "javascript:alert(1)", "mailto:a@b.c", "ftp://example.org/x", "data:text/html,hi", "vscode://x/y",
-            "x-apple.systempreferences:", "https://", "//example.org", "example.org", "",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "mailto:a@b.c",
+            "ftp://example.org/x",
+            "data:text/html,hi",
+            "vscode://x/y",
+            "x-apple.systempreferences:",
+            "https://",
+            "//example.org",
+            "example.org",
+            "",
         ] {
             assert_eq!(validate_url(bad).unwrap_err().code, "INVALID_ARGUMENT", "{bad}");
         }
@@ -181,7 +191,11 @@ mod tests {
         assert!(check_reveal(&roots, &root.join("versions/a/mods")).is_ok());
         assert!(check_reveal(&roots, &root).is_ok());
         assert_eq!(check_reveal(&roots, &outside).unwrap_err().code, "FORBIDDEN_PATH");
-        assert_eq!(check_reveal(&roots, &root.join("../outside/secret.txt")).unwrap_err().code, "FORBIDDEN_PATH", "dot-dot is resolved before the check");
+        assert_eq!(
+            check_reveal(&roots, &root.join("../outside/secret.txt")).unwrap_err().code,
+            "FORBIDDEN_PATH",
+            "dot-dot is resolved before the check"
+        );
         assert_eq!(check_reveal(&roots, Path::new("relative/path")).unwrap_err().code, "INVALID_ARGUMENT");
         assert_eq!(check_reveal(&roots, &root.join("nope")).unwrap_err().code, "NOT_FOUND");
         // a symlink inside the game dir that points outside must not be a way out

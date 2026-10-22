@@ -73,17 +73,9 @@ pub fn classpath_libraries<'a>(v: &'a ResolvedVersion, ctx: &RuleContext) -> Vec
     out
 }
 
-pub fn build_classpath(
-    v: &ResolvedVersion,
-    libraries_dir: &Path,
-    client_jar: &Path,
-    ctx: &RuleContext,
-) -> Vec<PathBuf> {
-    let mut cp: Vec<PathBuf> = classpath_libraries(v, ctx)
-        .iter()
-        .filter_map(|l| l.classpath_rel_path())
-        .map(|rel| libraries_dir.join(rel))
-        .collect();
+pub fn build_classpath(v: &ResolvedVersion, libraries_dir: &Path, client_jar: &Path, ctx: &RuleContext) -> Vec<PathBuf> {
+    let mut cp: Vec<PathBuf> =
+        classpath_libraries(v, ctx).iter().filter_map(|l| l.classpath_rel_path()).map(|rel| libraries_dir.join(rel)).collect();
     cp.push(client_jar.to_path_buf());
     cp
 }
@@ -128,37 +120,19 @@ impl BuiltCommand {
     }
 }
 
-pub fn build_command(
-    req: &LaunchRequest,
-    v: &ResolvedVersion,
-    java: &Path,
-    ctx: &RuleContext,
-) -> Result<BuiltCommand, LaunchError> {
+pub fn build_command(req: &LaunchRequest, v: &ResolvedVersion, java: &Path, ctx: &RuleContext) -> Result<BuiltCommand, LaunchError> {
     let mc = Path::new(&req.minecraft_dir);
     let libraries_dir = mc.join("libraries");
     let assets_root = mc.join("assets");
     let jar = version_jar_path(mc, client_jar_id(v));
-    let game_dir = req
-        .game_dir
-        .as_ref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| mc.join("versions").join(&v.id));
+    let game_dir = req.game_dir.as_ref().map(PathBuf::from).unwrap_or_else(|| mc.join("versions").join(&v.id));
     let natives_dir = mc.join("versions").join(&v.id).join(format!("{}-natives", v.id));
     let sep = if cfg!(windows) { ";" } else { ":" };
-    let cp = build_classpath(v, &libraries_dir, &jar, ctx)
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<_>>()
-        .join(sep);
+    let cp = build_classpath(v, &libraries_dir, &jar, ctx).iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(sep);
 
     let j = &v.json;
     let main_class = j.main_class.clone().ok_or_else(|| LaunchError::VersionJson("missing mainClass".into()))?;
-    let asset_id = j
-        .asset_index
-        .as_ref()
-        .map(|a| a.id.clone())
-        .or_else(|| j.assets.clone())
-        .unwrap_or_else(|| "legacy".into());
+    let asset_id = j.asset_index.as_ref().map(|a| a.id.clone()).or_else(|| j.assets.clone()).unwrap_or_else(|| "legacy".into());
 
     let mut vals: HashMap<String, String> = HashMap::new();
     let mut put = |k: &str, val: String| {
@@ -250,9 +224,7 @@ pub fn build_command(
 /// Versions with the modern `arguments.jvm` already carry it via an osx rule,
 /// but loader-merged/trimmed manifests sometimes drop it.
 fn needs_start_on_first_thread(v: &ResolvedVersion) -> bool {
-    v.json.libraries.iter().any(|l| {
-        matches!(l.maven_parts(), Some((g, _, ver, _, _)) if g == "org.lwjgl" && ver.starts_with('3'))
-    })
+    v.json.libraries.iter().any(|l| matches!(l.maven_parts(), Some((g, _, ver, _, _)) if g == "org.lwjgl" && ver.starts_with('3')))
 }
 
 #[cfg(test)]
@@ -268,7 +240,12 @@ mod tests {
         LaunchRequest {
             minecraft_dir: "/mc".into(),
             version_id: "1.20.1".into(),
-            auth: AuthData { name: "Steve".into(), uuid: "123e4567-e89b-12d3-a456-426614174000".into(), access_token: "SECRET".into(), user_type: "msa".into() },
+            auth: AuthData {
+                name: "Steve".into(),
+                uuid: "123e4567-e89b-12d3-a456-426614174000".into(),
+                access_token: "SECRET".into(),
+                user_type: "msa".into(),
+            },
             java_path: None,
             game_dir: None,
             max_memory_mb: Some(2048),

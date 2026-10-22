@@ -44,7 +44,9 @@ pub fn physical_memory_mb() -> u64 {
     }
     #[cfg(target_os = "linux")]
     if let Ok(s) = std::fs::read_to_string("/proc/meminfo") {
-        if let Some(kb) = s.lines().find_map(|l| l.strip_prefix("MemTotal:")).and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok()) {
+        if let Some(kb) =
+            s.lines().find_map(|l| l.strip_prefix("MemTotal:")).and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        {
             return kb / 1024;
         }
     }
@@ -105,11 +107,7 @@ pub fn merge(g: &GlobalSettings, inst: &InstanceSettings, info: &InstanceInfo, m
             None
         }
     };
-    let java_preferred = [inst.java_path.clone(), g.java.selected.clone()]
-        .into_iter()
-        .flatten()
-        .filter(|p| !p.trim().is_empty())
-        .collect();
+    let java_preferred = [inst.java_path.clone(), g.java.selected.clone()].into_iter().flatten().filter(|p| !p.trim().is_empty()).collect();
     Tuning { max_memory_mb, jvm_args: split_args(jvm), game_args, resolution, java_preferred }
 }
 
@@ -127,7 +125,12 @@ fn acceptable(j: &JavaInfo, required: u32, max: Option<u32>) -> bool {
 
 /// Choose the Java: an explicitly preferred one when it fits, else the best discovered match.
 /// `Err` carries the majors that were found (for the error details).
-pub fn pick_java(preferred: &[String], discovered: Vec<JavaInfo>, required: u32, max: Option<u32>) -> Result<(JavaInfo, Option<String>), Vec<u32>> {
+pub fn pick_java(
+    preferred: &[String],
+    discovered: Vec<JavaInfo>,
+    required: u32,
+    max: Option<u32>,
+) -> Result<(JavaInfo, Option<String>), Vec<u32>> {
     let mut note = None;
     let mut seen_majors: Vec<u32> = Vec::new();
     for p in preferred {
@@ -157,14 +160,38 @@ mod tests {
 
     fn info(modable: bool, loaders: Vec<Loader>) -> InstanceInfo {
         InstanceInfo {
-            name: "x".into(), path: "/p".into(), root: "/r".into(), kind: InstanceKind::Release, mc_version: Some("1.20.1".into()),
-            loaders, release_time: None, version_type: None, description: String::new(), category: Category::Error, icon: String::new(),
-            custom_logo_path: None, starred: false, hidden: false, modable, game_dir: "/g".into(), isolated: true, inherits_from: None, error: None,
+            name: "x".into(),
+            path: "/p".into(),
+            root: "/r".into(),
+            kind: InstanceKind::Release,
+            mc_version: Some("1.20.1".into()),
+            loaders,
+            release_time: None,
+            version_type: None,
+            description: String::new(),
+            category: Category::Error,
+            icon: String::new(),
+            custom_logo_path: None,
+            starred: false,
+            hidden: false,
+            modable,
+            game_dir: "/g".into(),
+            isolated: true,
+            inherits_from: None,
+            error: None,
         }
     }
 
     fn j(major: u32, arch: &str) -> JavaInfo {
-        JavaInfo { path: format!("/j{major}/bin/java"), home: format!("/j{major}"), version: major.to_string(), major, arch: arch.into(), vendor: String::new(), is_jdk: true }
+        JavaInfo {
+            path: format!("/j{major}/bin/java"),
+            home: format!("/j{major}"),
+            version: major.to_string(),
+            major,
+            arch: arch.into(),
+            vendor: String::new(),
+            is_jdk: true,
+        }
     }
 
     #[test]

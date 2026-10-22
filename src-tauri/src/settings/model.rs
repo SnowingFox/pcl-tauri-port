@@ -5,15 +5,10 @@ pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct McFolderEntry {
     pub name: String,
     pub path: String,
-}
-
-impl Default for McFolderEntry {
-    fn default() -> Self {
-        Self { name: String::new(), path: String::new() }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -114,7 +109,8 @@ pub struct GameSettings {
     pub custom_info: String,
 }
 
-pub const DEFAULT_JVM_ARGS: &str = "-XX:-OmitStackTraceInFastThrow -Dfml.ignoreInvalidMinecraftCertificates=True -Dfml.ignorePatchDiscrepancies=True";
+pub const DEFAULT_JVM_ARGS: &str =
+    "-XX:-OmitStackTraceInFastThrow -Dfml.ignoreInvalidMinecraftCertificates=True -Dfml.ignorePatchDiscrepancies=True";
 
 impl Default for GameSettings {
     fn default() -> Self {
@@ -244,15 +240,7 @@ pub struct WindowSettings {
 
 impl Default for WindowSettings {
     fn default() -> Self {
-        Self {
-            width: 1000,
-            height: 618,
-            x: None,
-            y: None,
-            maximized: false,
-            remember_geometry: true,
-            button_style: WindowButtonStyle::Pcl,
-        }
+        Self { width: 1000, height: 618, x: None, y: None, maximized: false, remember_geometry: true, button_style: WindowButtonStyle::Pcl }
     }
 }
 
@@ -322,12 +310,7 @@ impl GlobalSettings {
                 path: crate::settings::store::default_minecraft_dir().to_string_lossy().into_owned(),
             });
         }
-        let valid = self
-            .game
-            .selected_folder
-            .as_ref()
-            .map(|s| self.game.folders.iter().any(|f| &f.path == s))
-            .unwrap_or(false);
+        let valid = self.game.selected_folder.as_ref().map(|s| self.game.folders.iter().any(|f| &f.path == s)).unwrap_or(false);
         if !valid {
             self.game.selected_folder = self.game.folders.first().map(|f| f.path.clone());
         }

@@ -31,9 +31,14 @@ pub fn parse(text: &str, _base: &str) -> Result<ModpackInstallPlan, String> {
         let path = f["path"].as_str().ok_or("file entry without path")?.to_string();
         // validate now so a malicious pack fails at planning time
         safe_join(Path::new("/"), &path)?;
+        let urls: Vec<String> =
+            f["downloads"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        for u in &urls {
+            crate::settings::guard::check_download_url(u).map_err(|e| format!("{path}: {e}"))?;
+        }
         files.push(PlanFile {
             path,
-            urls: f["downloads"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+            urls,
             sha1: f["hashes"]["sha1"].as_str().map(str::to_string),
             // PCL: Modrinth packs should not be size-checked
             size: None,
@@ -58,8 +63,8 @@ mod tests {
     use super::*;
     const IDX: &str = r#"{"formatVersion":1,"game":"minecraft","versionId":"1.2","name":"My Pack",
       "files":[{"path":"mods/a.jar","hashes":{"sha1":"aa","sha512":"x"},"downloads":["https://cdn.modrinth.com/a.jar"],"fileSize":3,"env":{"client":"required","server":"required"}},
-               {"path":"mods/b.jar","hashes":{"sha1":"bb"},"downloads":["https://x/b.jar"],"env":{"client":"optional"}},
-               {"path":"mods/c.jar","hashes":{"sha1":"cc"},"downloads":["https://x/c.jar"],"env":{"client":"unsupported"}}],
+               {"path":"mods/b.jar","hashes":{"sha1":"bb"},"downloads":["https://cdn.modrinth.com/data/x/b.jar"],"env":{"client":"optional"}},
+               {"path":"mods/c.jar","hashes":{"sha1":"cc"},"downloads":["https://cdn.modrinth.com/data/x/c.jar"],"env":{"client":"unsupported"}}],
       "dependencies":{"minecraft":"1.20.1","fabric-loader":"0.15.0","weird":"1"}}"#;
 
     #[test]
@@ -73,6 +78,20 @@ mod tests {
     }
 
     #[test]
+    fn rejects_hostile_download_urls() {
+        for bad in [
+            "file:///etc/passwd",
+            "http://cdn.modrinth.com/a.jar",
+            "https://127.0.0.1/a.jar",
+            "https://169.254.169.254/latest/meta-data",
+            "https://user:pw@evil.example/a.jar",
+        ] {
+            let idx = IDX.replacen("https://cdn.modrinth.com/a.jar", bad, 1);
+            assert!(parse(&idx, "").is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn rejects_traversal() {
         let bad = IDX.replace("mods/a.jar", "../../a.jar");
         assert!(parse(&bad, "").is_err());
@@ -80,7 +99,12 @@ mod tests {
 
     #[test]
     fn end_to_end_zip_and_overrides() {
-        let zip = build_zip(&[("modrinth.index.json", IDX), ("overrides/config/x.toml", "k=1"), ("client-overrides/options.txt", "o"), ("overrides/../evil.txt", "e")]);
+        let zip = build_zip(&[
+            ("modrinth.index.json", IDX),
+            ("overrides/config/x.toml", "k=1"),
+            ("client-overrides/options.txt", "o"),
+            ("overrides/../evil.txt", "e"),
+        ]);
         let dir = std::env::temp_dir().join(format!("pcl-mrpack-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

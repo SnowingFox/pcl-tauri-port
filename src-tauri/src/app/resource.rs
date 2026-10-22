@@ -1,11 +1,11 @@
 //! `app_install_resource`: pick a compatible version, resolve required dependencies and download
 //! into the right folder of an instance.
 
-use super::error::{from_resource_error, AppError, AppResult};
-use super::instance::ResolvedInstance;
 use super::AppCtx;
+use super::error::{AppError, AppResult, from_resource_error};
+use super::instance::ResolvedInstance;
 use crate::download::engine::FileSpec;
-use crate::instances::detect::{validate_name, LoaderKind};
+use crate::instances::detect::{LoaderKind, validate_name};
 use crate::resources::types::{DependencyKind, ModLoader, Platform, ResourceFile, ResourceKind};
 use crate::resources::{curseforge, modrinth};
 use serde::Serialize;
@@ -19,7 +19,13 @@ const MAX_FILES: usize = 60;
 /// The remote side, abstracted so selection and dependency logic is testable offline.
 #[async_trait::async_trait]
 pub trait ResourceApi: Send + Sync {
-    async fn versions(&self, platform: Platform, project_id: &str, mc: Option<&str>, loader: Option<ModLoader>) -> Result<Vec<ResourceFile>, String>;
+    async fn versions(
+        &self,
+        platform: Platform,
+        project_id: &str,
+        mc: Option<&str>,
+        loader: Option<ModLoader>,
+    ) -> Result<Vec<ResourceFile>, String>;
     /// One concrete version (Modrinth version id / CurseForge file id).
     async fn version(&self, platform: Platform, id: &str) -> Result<ResourceFile, String>;
     /// A downloadable URL for files whose listing carries none.
@@ -32,7 +38,13 @@ pub struct LiveApi;
 
 #[async_trait::async_trait]
 impl ResourceApi for LiveApi {
-    async fn versions(&self, platform: Platform, project_id: &str, mc: Option<&str>, loader: Option<ModLoader>) -> Result<Vec<ResourceFile>, String> {
+    async fn versions(
+        &self,
+        platform: Platform,
+        project_id: &str,
+        mc: Option<&str>,
+        loader: Option<ModLoader>,
+    ) -> Result<Vec<ResourceFile>, String> {
         match platform {
             Platform::Modrinth => modrinth::versions(project_id, mc, loader).await,
             Platform::CurseForge => curseforge::files(project_id, mc, loader).await,
@@ -75,7 +87,10 @@ pub fn target_dir(game_dir: &Path, kind: ResourceKind, world: Option<&str>) -> A
         ResourceKind::ResourcePack => game_dir.join("resourcepacks"),
         ResourceKind::Shader => game_dir.join("shaderpacks"),
         ResourceKind::DataPack => {
-            let w = world.map(str::trim).filter(|w| !w.is_empty()).ok_or_else(|| AppError::invalid("安装数据包需要指定世界名称（worldName）"))?;
+            let w = world
+                .map(str::trim)
+                .filter(|w| !w.is_empty())
+                .ok_or_else(|| AppError::invalid("安装数据包需要指定世界名称（worldName）"))?;
             validate_name(w).map_err(AppError::invalid)?;
             let dir = game_dir.join("saves").join(w);
             if !dir.is_dir() {
@@ -117,7 +132,8 @@ fn release_rank(t: &str) -> u8 {
 }
 
 pub fn compatible(f: &ResourceFile, mc: &str, loader: Option<ModLoader>) -> bool {
-    (f.game_versions.is_empty() || f.game_versions.iter().any(|v| v == mc)) && loader.is_none_or(|l| f.loaders.is_empty() || f.loaders.contains(&l))
+    (f.game_versions.is_empty() || f.game_versions.iter().any(|v| v == mc))
+        && loader.is_none_or(|l| f.loaders.is_empty() || f.loaders.contains(&l))
 }
 
 /// Best version: compatible first, then release over beta over alpha, then newest.
@@ -126,16 +142,19 @@ pub fn pick_best(files: &[ResourceFile], mc: &str, loader: Option<ModLoader>) ->
         .iter()
         .filter(|f| compatible(f, mc, loader))
         .min_by(|a, b| {
-            release_rank(&a.release_type)
-                .cmp(&release_rank(&b.release_type))
-                .then_with(|| b.date_published.cmp(&a.date_published))
+            release_rank(&a.release_type).cmp(&release_rank(&b.release_type)).then_with(|| b.date_published.cmp(&a.date_published))
         })
         .cloned()
 }
 
 /// Newest release (any Minecraft version), used for modpack projects.
 pub fn pick_latest(files: &[ResourceFile]) -> Option<ResourceFile> {
-    files.iter().min_by(|a, b| release_rank(&a.release_type).cmp(&release_rank(&b.release_type)).then_with(|| b.date_published.cmp(&a.date_published))).cloned()
+    files
+        .iter()
+        .min_by(|a, b| {
+            release_rank(&a.release_type).cmp(&release_rank(&b.release_type)).then_with(|| b.date_published.cmp(&a.date_published))
+        })
+        .cloned()
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -197,7 +216,13 @@ async fn to_planned(api: &dyn ResourceApi, f: &ResourceFile, dir: &Path, dep: bo
 }
 
 /// Candidate versions for a project; Quilt instances also accept Fabric builds.
-async fn candidates(api: &dyn ResourceApi, platform: Platform, project: &str, mc: &str, loader: Option<ModLoader>) -> AppResult<Vec<ResourceFile>> {
+async fn candidates(
+    api: &dyn ResourceApi,
+    platform: Platform,
+    project: &str,
+    mc: &str,
+    loader: Option<ModLoader>,
+) -> AppResult<Vec<ResourceFile>> {
     let mut all = api.versions(platform, project, Some(mc), loader).await.map_err(from_resource_error)?;
     if loader == Some(ModLoader::Quilt) && pick_best(&all, mc, loader).is_none() {
         all.extend(api.versions(platform, project, Some(mc), Some(ModLoader::Fabric)).await.map_err(from_resource_error)?);
@@ -310,15 +335,18 @@ pub async fn install_resource(ctx: &AppCtx, api: &dyn ResourceApi, req: Resource
         return Err(AppError::new("INSTANCE_NOT_MODDABLE", "该实例没有安装 Forge / Fabric / Quilt / NeoForge，无法安装 Mod"));
     }
     let mc = inst.info.mc_version.clone().ok_or_else(|| AppError::new("INSTANCE_INVALID", "无法确定实例的 Minecraft 版本"))?;
-    let plan = plan_install(api, &PlanInput {
-        platform: req.platform,
-        project_id: &req.project_id,
-        version_id: req.version_id.as_deref(),
-        kind: req.kind,
-        mc: &mc,
-        loader,
-        dest_dir: &dest_dir,
-    })
+    let plan = plan_install(
+        api,
+        &PlanInput {
+            platform: req.platform,
+            project_id: &req.project_id,
+            version_id: req.version_id.as_deref(),
+            kind: req.kind,
+            mc: &mc,
+            loader,
+            dest_dir: &dest_dir,
+        },
+    )
     .await?;
     tracing::info!(files = plan.files.len(), skipped = plan.skipped.len(), dest = %dest_dir.display(), "resource install planned");
     let label = match plan.files.as_slice() {
@@ -358,9 +386,21 @@ mod tests {
 
     fn rf(platform: Platform, id: &str, project: &str, name: &str) -> ResourceFile {
         ResourceFile {
-            platform, id: id.into(), project_id: project.into(), name: name.into(), file_name: name.into(), version_number: None,
-            release_type: "release".into(), game_versions: vec!["1.20.1".into()], loaders: vec![ModLoader::Fabric], sha1: Some(format!("sha-{id}")),
-            size: 10, download_urls: vec![format!("https://cdn.example/{name}")], date_published: "2024-01-01T00:00:00Z".into(), dependencies: vec![], fingerprint: None,
+            platform,
+            id: id.into(),
+            project_id: project.into(),
+            name: name.into(),
+            file_name: name.into(),
+            version_number: None,
+            release_type: "release".into(),
+            game_versions: vec!["1.20.1".into()],
+            loaders: vec![ModLoader::Fabric],
+            sha1: Some(format!("sha-{id}")),
+            size: 10,
+            download_urls: vec![format!("https://cdn.example/{name}")],
+            date_published: "2024-01-01T00:00:00Z".into(),
+            dependencies: vec![],
+            fingerprint: None,
         }
     }
 
@@ -373,7 +413,13 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ResourceApi for Fake {
-        async fn versions(&self, _p: Platform, project: &str, mc: Option<&str>, loader: Option<ModLoader>) -> Result<Vec<ResourceFile>, String> {
+        async fn versions(
+            &self,
+            _p: Platform,
+            project: &str,
+            mc: Option<&str>,
+            loader: Option<ModLoader>,
+        ) -> Result<Vec<ResourceFile>, String> {
             self.calls.lock().unwrap().push(format!("versions:{project}:{}:{:?}", mc.unwrap_or("-"), loader));
             Ok(self.by_project.get(project).cloned().unwrap_or_default())
         }
@@ -445,7 +491,10 @@ mod tests {
             Dependency { project_id: Some("main".into()), file_id: None, kind: DependencyKind::Required },
         ];
         let mut lib = rf(Platform::Modrinth, "l1", "lib", "lib.jar");
-        lib.dependencies = vec![Dependency { project_id: Some("main".into()), file_id: None, kind: DependencyKind::Required }, Dependency { project_id: Some("gone".into()), file_id: None, kind: DependencyKind::Required }];
+        lib.dependencies = vec![
+            Dependency { project_id: Some("main".into()), file_id: None, kind: DependencyKind::Required },
+            Dependency { project_id: Some("gone".into()), file_id: None, kind: DependencyKind::Required },
+        ];
         let mut api = Fake::default();
         api.by_project.insert("main".into(), vec![main]);
         api.by_project.insert("lib".into(), vec![lib]);
@@ -467,7 +516,8 @@ mod tests {
         p.dependencies = vec![Dependency { project_id: Some("iris".into()), file_id: None, kind: DependencyKind::Required }];
         let mut api = Fake::default();
         api.by_project.insert("shader".into(), vec![p]);
-        let plan = plan_install(&api, &input("shader", ResourceKind::Shader, Some(ModLoader::Fabric), Path::new("/g/shaderpacks"))).await.unwrap();
+        let plan =
+            plan_install(&api, &input("shader", ResourceKind::Shader, Some(ModLoader::Fabric), Path::new("/g/shaderpacks"))).await.unwrap();
         assert_eq!(plan.files.len(), 1);
         assert!(api.calls.lock().unwrap()[0].ends_with(":None"), "loader is not sent for shaders: {:?}", api.calls.lock().unwrap());
     }
@@ -501,9 +551,15 @@ mod tests {
             async fn versions(&self, _: Platform, _: &str, _: Option<&str>, l: Option<ModLoader>) -> Result<Vec<ResourceFile>, String> {
                 Ok(if l == Some(ModLoader::Fabric) { vec![self.0.clone()] } else { vec![] })
             }
-            async fn version(&self, _: Platform, _: &str) -> Result<ResourceFile, String> { Err("x".into()) }
-            async fn download_url(&self, _: &ResourceFile) -> Result<String, String> { Err("x".into()) }
-            async fn curseforge_files(&self, _: &[u64]) -> Result<Vec<ResourceFile>, String> { Ok(vec![]) }
+            async fn version(&self, _: Platform, _: &str) -> Result<ResourceFile, String> {
+                Err("x".into())
+            }
+            async fn download_url(&self, _: &ResourceFile) -> Result<String, String> {
+                Err("x".into())
+            }
+            async fn curseforge_files(&self, _: &[u64]) -> Result<Vec<ResourceFile>, String> {
+                Ok(vec![])
+            }
         }
         let plan = plan_install(&Q(fabric_only), &input("p", ResourceKind::Mod, Some(ModLoader::Quilt), Path::new("/m"))).await.unwrap();
         assert_eq!(plan.files[0].file_name, "fab.jar");

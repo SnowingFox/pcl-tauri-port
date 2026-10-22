@@ -3,7 +3,7 @@
 
 use crate::download::engine::FileSpec;
 use crate::download::error::{DlError, DlResult};
-use crate::download::manifest::{host_os, AssetIndex, VersionJson};
+use crate::download::manifest::{AssetIndex, VersionJson, host_os};
 use crate::download::{Manager, TaskCtx};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -72,6 +72,9 @@ pub async fn install_version_files(ctx: &TaskCtx, mc: &str, raw: Value, vj: &Ver
 
     // 4. asset index
     if let Some(ai) = &vj.asset_index {
+        if !crate::settings::guard::is_safe_component(&ai.id) {
+            return Err(DlError::Other(format!("unsafe asset index id: {}", ai.id)));
+        }
         ctx.tracker.begin_stage("asset-index", at, span * 0.02, 1, ai.size.unwrap_or(0));
         let ipath = gd.join("assets/indexes").join(format!("{}.json", ai.id));
         ctx.file(FileSpec::new(&ai.url, &ipath).with_sha1(ai.sha1.clone())).await?;
@@ -81,6 +84,9 @@ pub async fn install_version_files(ctx: &TaskCtx, mc: &str, raw: Value, vj: &Ver
         let idx: AssetIndex = serde_json::from_slice(&tokio::fs::read(&ipath).await?)?;
         let objs = gd.join("assets/objects");
         let mut seen = std::collections::HashSet::new();
+        if let Some(bad) = idx.objects.values().find(|o| !o.is_valid()) {
+            return Err(DlError::Other(format!("asset index contains an invalid hash: {:?}", bad.hash)));
+        }
         let files: Vec<FileSpec> = idx
             .objects
             .values()
@@ -95,6 +101,10 @@ pub async fn install_version_files(ctx: &TaskCtx, mc: &str, raw: Value, vj: &Ver
         // Legacy layouts expect real file names on disk.
         if idx.r#virtual || idx.map_to_resources {
             let targets = [(idx.r#virtual, gd.join("assets/virtual").join(&ai.id)), (idx.map_to_resources, gd.join("resources"))];
+            // Legacy asset names become file names below `virtual/<id>` / `resources`.
+            if let Some(bad) = idx.objects.keys().find(|k| !crate::settings::guard::is_safe_rel(k)) {
+                return Err(DlError::Other(format!("asset index contains an unsafe name: {bad:?}")));
+            }
             let list: Vec<(String, String)> = idx.objects.iter().map(|(k, o)| (k.clone(), o.rel_path())).collect();
             let objs = objs.clone();
             tokio::task::spawn_blocking(move || -> std::io::Result<()> {
@@ -120,13 +130,12 @@ pub async fn install_version_files(ctx: &TaskCtx, mc: &str, raw: Value, vj: &Ver
     }
 
     // 6. logging config
-    if let Some(f) = raw.pointer("/logging/client/file") {
-        if let (Some(id), Some(url)) = (f["id"].as_str(), f["url"].as_str()) {
-            ctx.tracker.begin_stage("log-config", at, span * 0.03, 1, 0);
-            ctx.file(FileSpec::new(url, gd.join("assets/log_configs").join(id)).with_sha1(f["sha1"].as_str().map(String::from))).await?;
-        }
+    if let Some(f) = raw.pointer("/logging/client/file")
+        && let (Some(id), Some(url)) = (f["id"].as_str().filter(|i| crate::settings::guard::is_safe_component(i)), f["url"].as_str())
+    {
+        ctx.tracker.begin_stage("log-config", at, span * 0.03, 1, 0);
+        ctx.file(FileSpec::new(url, gd.join("assets/log_configs").join(id)).with_sha1(f["sha1"].as_str().map(String::from))).await?;
     }
     ctx.tracker.begin_stage("done", start + span * 0.98, 0.0, 0, 0);
     Ok(raw)
 }
-
