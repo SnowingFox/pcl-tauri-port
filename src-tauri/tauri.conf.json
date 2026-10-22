@@ -12,9 +12,15 @@
   "app": {
     "windows": [
       {
-        "title": "pcl-tauri-port",
-        "width": 800,
-        "height": 600
+        "label": "main",
+        "title": "PCL Tauri",
+        "width": 1100,
+        "height": 680,
+        "minWidth": 900,
+        "minHeight": 560,
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
