@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
+import { crashApi, type CrashAnalysis } from "../../api";
 import { Button, Card, Empty } from "../../components/ui";
+import { CrashSummary } from "./CrashSummary";
 import { useGame } from "../../store/game";
 import { useUi } from "../../store/ui";
+import { reportError } from "../../lib/notify";
 import { t, tRaw } from "../../i18n";
 import type { LogLevel } from "../../api";
 
@@ -47,18 +50,37 @@ export function LogPage() {
 
 export function CrashPage() {
   const exit = useGame((s) => s.lastExit);
-  const onExit = useGame((s) => s.onExit);
+  const instance = useGame((s) => s.launchedInstance);
+  const logs = useGame((s) => s.logs);
+  const [text, setText] = useState("");
+  const [result, setResult] = useState<CrashAnalysis | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const analyze = async (run: () => Promise<CrashAnalysis>) => {
+    setBusy(true);
+    try { setResult(await run()); } catch (e) { reportError(e); } finally { setBusy(false); }
+  };
+
   return (
     <div className="col">
       <h2>{t("others.crash")}</h2>
       {exit?.crashed ? (
-        <Card title={t("others.crashTitle")}>
-          <p>{t("others.exitCode")}: {exit.code}</p>
-          {exit.reason && <p>{t("others.crashReason")}: {exit.reason}</p>}
-          <p className="dim">{t("others.crashAdvice")}</p>
-        </Card>
-      ) : <Empty text={t("common.empty")} />}
-      <div><Button onClick={() => onExit({ launchId: "demo", code: 1, crashed: true, reason: "示例：模组冲突" })}>{t("others.testCrash")}</Button></div>
+        <Card title={t("others.crashTitle")}><CrashSummary exit={exit} instance={instance} /></Card>
+      ) : <Empty text={t("others.crashNone")} />}
+      <Card title={t("others.analyzeLatest")}>
+        <div className="col">
+          <div className="row">
+            <Button disabled={busy || !instance} onClick={() => instance && analyze(() => crashApi.analyzeInstance(instance, logs.slice(-300).map((l) => l.line)))}>
+              {busy ? t("others.analyzing") : t("others.analyzeLatest")}
+            </Button>
+          </div>
+          <textarea className="input" rows={4} aria-label={t("others.pasteLog")} placeholder={t("others.pasteLog")} value={text} onChange={(e) => setText(e.target.value)} />
+          <div><Button disabled={busy || !text.trim()} onClick={() => analyze(() => crashApi.analyzeText(text))}>{t("others.analyze")}</Button></div>
+          {result && (result.reasons.length === 0
+            ? <p className="dim" style={{ margin: 0 }}>{t("others.noReason")}</p>
+            : result.reasons.map((r) => <div key={r.id} className="card selectable" style={{ whiteSpace: "pre-wrap" }}>{r.message}</div>))}
+        </div>
+      </Card>
     </div>
   );
 }

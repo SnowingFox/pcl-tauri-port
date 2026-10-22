@@ -57,7 +57,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* shell */
 .shell { display: flex; flex-direction: column; height: 100%; }
 .titlebar { display: flex; align-items: center; gap: 16px; height: 52px; padding: 0 16px 0 84px; background: var(--accent); color: var(--on-accent); flex: none; }
-.titlebar .brand { font-weight: 700; letter-spacing: .3px; }
+.titlebar .brand { font-weight: 700; letter-spacing: .3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; font-size: 13px; }
 .titlebar-nav { display: flex; gap: 4px; margin: 0 auto; }
 .tab { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 999px; color: inherit; text-decoration: none; font-weight: 500; opacity: .85; transition: background var(--dur), opacity var(--dur); }
 .tab:hover { opacity: 1; background: rgb(255 255 255 / .18); }

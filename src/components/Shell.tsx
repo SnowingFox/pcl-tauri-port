@@ -16,7 +16,7 @@ export function Shell() {
   return (
     <div className="shell">
       <header className="titlebar" data-tauri-drag-region>
-        <span className="brand" data-tauri-drag-region>{t("app.name")}</span>
+        <span className="brand" data-tauri-drag-region title={t("app.name")}>{t("app.name")}</span>
         <nav className="titlebar-nav" aria-label="主导航">
           {TABS.map(({ to, key, Icon }) => (
             <NavLink key={to} to={to} className={({ isActive }) => `tab ${isActive ? "active" : ""}`}>

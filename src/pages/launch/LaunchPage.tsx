@@ -1,21 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { Play, Square, UserPlus, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { Button, Card, Empty, ProgressBar } from "../../components/ui";
+import { Button, Card, ConfirmDialog, Empty, LoadError, Loading, ProgressBar } from "../../components/ui";
 import { useAccounts } from "../../store/accounts";
 import { useGame } from "../../store/game";
+import { usePrompt } from "../../store/prompt";
 import { useUi } from "../../store/ui";
+import { reportError } from "../../lib/notify";
 import { t } from "../../i18n";
-import { formatDate } from "../../components/format";
 import { LoginDialog } from "./LoginDialog";
+import { LaunchPromptDialog } from "./LaunchPromptDialog";
 
 export default function LaunchPage() {
-  const { accounts, selectedId, select, remove } = useAccounts();
+  const { accounts, selectedId, loaded: accountsLoaded, select, remove } = useAccounts();
   const selected = accounts.find((a) => a.id === selectedId);
-  const { instances, selectedInstanceId, selectInstance, phase, progress, logs, start, kill, clearLogs } = useGame();
+  const { instances, instancesLoaded, instancesError, loadInstances, selectedInstanceId, selectInstance, phase, progress, logs, kill, clearLogs } = useGame();
   const inst = instances.find((i) => i.id === selectedInstanceId);
+  const requestLaunch = usePrompt((s) => s.requestLaunch);
   const toast = useUi((s) => s.toast);
   const [login, setLogin] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
@@ -23,30 +27,34 @@ export default function LaunchPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [logs.length]);
 
-  const onLaunch = async () => {
+  const onLaunch = () => {
     if (!selected) return toast(t("launch.needAccount"), "error");
     if (!inst) return toast(t("launch.needInstance"), "error");
-    try { await start(selected.id); } catch (e) { toast(String((e as Error).message ?? e), "error"); }
+    if (inst.error) return toast(t("launch.brokenInstance"), "error");
+    void requestLaunch(selected);
   };
 
   const busy = phase !== "idle";
+  const removeTarget = accounts.find((a) => a.id === removing);
   return (
     <div className="content grow" style={{ width: "100%" }}>
       <div className="launch-hero">
         <Card title={t("launch.account")} actions={<Button onClick={() => setLogin(true)}><UserPlus size={14} /> {t("launch.addAccount")}</Button>}>
-          {accounts.length === 0 ? (
-            <Empty text={t("launch.noAccount")} />
+          {!accountsLoaded ? (
+            <Loading />
+          ) : accounts.length === 0 ? (
+            <Empty text={t("launch.noAccount")} action={<Button variant="primary" onClick={() => setLogin(true)}>{t("launch.addAccount")}</Button>} />
           ) : (
             <ul className="list" style={{ listStyle: "none", margin: 0, padding: 0 }} role="radiogroup" aria-label={t("launch.account")}>
               {accounts.map((a) => (
                 <li key={a.id} className="list-item">
-                  <input type="radio" name="account" id={`acc-${a.id}`} checked={a.id === selectedId} onChange={() => select(a.id)} />
+                  <input type="radio" name="account" id={`acc-${a.id}`} checked={a.id === selectedId} disabled={busy} onChange={() => select(a.id).catch((e) => reportError(e))} />
                   <span className="avatar" aria-hidden>{a.name[0]?.toUpperCase()}</span>
                   <label htmlFor={`acc-${a.id}`} className="grow">
                     <div>{a.name}</div>
-                    <div className="dim" style={{ fontSize: 12 }}>{t(`account.${a.kind}`)}</div>
+                    <div className="dim" style={{ fontSize: 12 }}>{t(`account.${a.kind}`)}{a.serverName ? ` · ${a.serverName}` : ""}</div>
                   </label>
-                  <Button variant="ghost" aria-label={`${t("account.remove")} ${a.name}`} onClick={() => remove(a.id)}><Trash2 size={14} /></Button>
+                  <Button variant="ghost" disabled={busy} aria-label={`${t("account.remove")} ${a.name}`} onClick={() => setRemoving(a.id)}><Trash2 size={14} /></Button>
                 </li>
               ))}
             </ul>
@@ -54,20 +62,26 @@ export default function LaunchPage() {
         </Card>
 
         <Card title={t("launch.instance")}>
-          {instances.length === 0 ? (
-            <Empty text={t("launch.noInstance")} />
+          {!instancesLoaded ? (
+            <Loading />
+          ) : instancesError ? (
+            <LoadError text={`${t("launch.instancesFailed")}：${instancesError}`} onRetry={() => void loadInstances().catch((e) => reportError(e))} />
+          ) : instances.length === 0 ? (
+            <Empty text={t("launch.noInstance")} action={<Link to="/download/game">{t("launch.goDownload")}</Link>} />
           ) : (
             <div className="col">
               <select className="input" aria-label={t("launch.instance")} value={selectedInstanceId ?? ""} onChange={(e) => selectInstance(e.target.value)} disabled={busy}>
-                {instances.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+                {instances.map((i) => <option key={i.id} value={i.id}>{i.name}{i.error ? " ⚠" : ""}</option>)}
               </select>
               {inst && (
-                <div className="row wrap">
-                  <span className="chip">{inst.mcVersion}</span>
-                  <span className="chip">{inst.loader}</span>
-                  <span className="dim" style={{ fontSize: 12 }}>
-                    {t("launch.lastPlayed")}: {inst.lastPlayed ? formatDate(inst.lastPlayed) : t("launch.never")}
-                  </span>
+                <div className="col" style={{ gap: 4 }}>
+                  <div className="row wrap">
+                    {inst.mcVersion && <span className="chip">{inst.mcVersion}</span>}
+                    {inst.loader !== "vanilla" && <span className="chip">{inst.loader}{inst.loaderVersion ? ` ${inst.loaderVersion}` : ""}</span>}
+                  </div>
+                  {inst.error
+                    ? <span role="alert" style={{ color: "var(--danger)", fontSize: 12 }}>{t("launch.brokenInstance")}：{inst.error}</span>
+                    : <span className="dim" style={{ fontSize: 12 }}>{inst.description}</span>}
                 </div>
               )}
               <Link to="/download/game">{t("nav.download")}</Link>
@@ -79,9 +93,9 @@ export default function LaunchPage() {
       <Card>
         <div className="row">
           {phase === "idle" ? (
-            <Button variant="primary" big onClick={onLaunch}><Play size={18} /> {t("launch.launchBtn")}</Button>
+            <Button variant="primary" big onClick={onLaunch} disabled={!inst || !!inst.error}><Play size={18} /> {t("launch.launchBtn")}</Button>
           ) : (
-            <Button variant="danger" big onClick={() => kill()}><Square size={18} /> {t("launch.kill")}</Button>
+            <Button variant="danger" big onClick={() => kill().catch((e) => reportError(e))}><Square size={18} /> {t("launch.kill")}</Button>
           )}
           <div className="grow col" style={{ gap: 6 }}>
             {busy ? (
@@ -103,6 +117,11 @@ export default function LaunchPage() {
       </Card>
 
       {login && <LoginDialog onClose={() => setLogin(false)} />}
+      {removeTarget && (
+        <ConfirmDialog danger title={t("account.remove")} message={t("account.confirmRemove", { name: removeTarget.name })} onClose={() => setRemoving(null)}
+          onConfirm={() => { void remove(removeTarget.id).catch((e) => reportError(e)); }} />
+      )}
+      <LaunchPromptDialog />
     </div>
   );
 }

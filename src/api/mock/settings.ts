@@ -1,17 +1,19 @@
 import type { SettingsApi } from "../settings";
-import type { BackendSettings } from "../types";
+import { defaultGlobalSettings } from "../defaults";
+import { deepMerge } from "../util";
 import { delay } from "./bus";
+import { MOCK_ROOT } from "./instances";
 
-export const defaultBackendSettings = (): BackendSettings => ({
-  java: { autoSelect: true, path: "", autoMemory: true, memoryMb: 4096, jvmArgs: "" },
-  launch: { gameArgs: "", width: 854, height: 480, fullscreen: false, onLaunch: "keep" },
-  download: { source: "bmclapi", threads: 16, verifyFiles: true },
-});
-
-let state = defaultBackendSettings();
+const seed = () => {
+  const s = defaultGlobalSettings();
+  s.game.folders = [{ name: "默认文件夹", path: MOCK_ROOT }];
+  s.game.selected_folder = MOCK_ROOT;
+  return s;
+};
+let state = seed();
 
 export function resetSettingsMock(): void {
-  state = defaultBackendSettings();
+  state = seed();
 }
 
 export const settingsMock: SettingsApi = {
@@ -19,17 +21,25 @@ export const settingsMock: SettingsApi = {
     await delay(40);
     return structuredClone(state);
   },
-  async set(s) {
-    state = structuredClone(s);
+  async patch(p) {
+    state = deepMerge(state, p);
+    return structuredClone(state);
   },
-  async scanJava() {
+  async reset() {
+    state = seed();
+    return structuredClone(state);
+  },
+  async path() {
+    return "~/Library/Application Support/com.snowingfox.pcltauriport/settings.json";
+  },
+  async discoverJava() {
     await delay(500);
     return [
-      { path: "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/bin/java", version: "21.0.4", vendor: "Eclipse Temurin", is64: true },
-      { path: "/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home/bin/java", version: "17.0.12", vendor: "Eclipse Temurin", is64: true },
+      { path: "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/bin/java", home: "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home", version: "21.0.4", major: 21, arch: "arm64", vendor: "Eclipse Temurin", isJdk: true },
+      { path: "/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home/bin/java", home: "/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home", version: "17.0.12", major: 17, arch: "arm64", vendor: "Eclipse Temurin", isJdk: true },
     ];
   },
-  async openUrl(url) {
-    if (typeof window !== "undefined") window.open(url, "_blank", "noopener,noreferrer");
+  async inspectJava(path) {
+    return { path, home: path, version: "21.0.4", major: 21, arch: "arm64", vendor: "Mock", isJdk: true };
   },
 };
