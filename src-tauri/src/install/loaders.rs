@@ -106,6 +106,20 @@ pub fn parse_neoforge_list(bytes: &[u8], mc: &str) -> DlResult<Vec<LoaderVersion
     Ok(out)
 }
 
+/// BMCLAPI `/neoforge/list/<mc>`: `[{"version":"21.4.158", ...}]`, oldest first.
+pub fn parse_bmcl_neoforge_list(bytes: &[u8]) -> DlResult<Vec<LoaderVersion>> {
+    let v: serde_json::Value = serde_json::from_slice(bytes)?;
+    let mut out: Vec<LoaderVersion> = v
+        .as_array()
+        .ok_or("expected array")?
+        .iter()
+        .filter_map(|e| e["version"].as_str())
+        .map(|s| LoaderVersion { version: s.to_string(), stable: Some(!s.contains('-')) })
+        .collect();
+    out.reverse();
+    Ok(out)
+}
+
 pub async fn list_loader_versions(m: &Manager, loader: &str, mc: &str) -> DlResult<Vec<LoaderVersion>> {
     let src = m.cfg().source;
     match loader {
@@ -113,10 +127,17 @@ pub async fn list_loader_versions(m: &Manager, loader: &str, mc: &str) -> DlResu
         "quilt" => parse_profile_loader_list(&fetch_bytes(&m.client, src, &format!("{}/versions/loader/{mc}", ProfileLoader::Quilt.meta())).await?),
         // Forge has no official list API; BMCLAPI is the only JSON source, used regardless of the mirror setting.
         "forge" => parse_forge_list(&fetch_bytes(&m.client, Source::Official, &format!("https://bmclapi2.bangbang93.com/forge/minecraft/{mc}")).await?),
-        "neoforge" => parse_neoforge_list(
-            &fetch_bytes(&m.client, Source::Official, "https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge").await?,
-            mc,
-        ),
+        "neoforge" => {
+            // The official maven API is the primary source; some networks cannot reach it, so fall back
+            // to BMCLAPI's per-version list.
+            match fetch_bytes(&m.client, Source::Official, "https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge").await {
+                Ok(b) => parse_neoforge_list(&b, mc),
+                Err(e) => {
+                    tracing::warn!("official NeoForge version list unavailable ({e}), using BMCLAPI");
+                    parse_bmcl_neoforge_list(&fetch_bytes(&m.client, Source::Official, &format!("https://bmclapi2.bangbang93.com/neoforge/list/{mc}")).await?)
+                }
+            }
+        }
         other => Err(DlError::Other(format!("unknown loader {other}"))),
     }
 }
@@ -165,6 +186,15 @@ mod tests {
         assert_eq!(l[0].version, "0.15.1");
         let f = parse_forge_list(br#"[{"version":"47.1.0","build":10},{"version":"47.2.0","build":20}]"#).unwrap();
         assert_eq!(f[0].version, "47.2.0");
+    }
+
+    #[test]
+    fn bmcl_neoforge_list() {
+        let l = parse_bmcl_neoforge_list(br#"[{"version":"21.4.1-beta","mcversion":"1.21.4"},{"version":"21.4.158"},{"nope":1}]"#).unwrap();
+        assert_eq!(l.iter().map(|v| v.version.as_str()).collect::<Vec<_>>(), ["21.4.158", "21.4.1-beta"], "newest first");
+        assert_eq!(l[0].stable, Some(true));
+        assert_eq!(l[1].stable, Some(false));
+        assert!(parse_bmcl_neoforge_list(b"{}").is_err());
     }
 
     #[test]
