@@ -25,6 +25,7 @@ type AppError = { code: ErrorCode; message: string /* zh-CN, masked */; details?
 | `JAVA_MISSING` | no installed Java satisfies the version | `{ requiredMajor: number, maxMajor: number \| null, found: number[] }` |
 | `ACCOUNT_NOT_FOUND` | unknown account id | - |
 | `ACCOUNT_EXPIRED` | token refresh failed / needs re-login | - |
+| `MS_CLIENT_ID_MISSING` | Microsoft account but no Azure client ID configured (`accounts_set_ms_client_id` / `PCL_MS_CLIENT_ID`) | - |
 | `ACCOUNT_ERROR` | other account failure | - |
 | `INSTANCE_NOT_FOUND` | folder missing | `{ instanceId }` |
 | `INSTANCE_INVALID` | version json broken / unreadable | `{ instanceId? }` |

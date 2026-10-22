@@ -301,3 +301,18 @@ async fn project_source_downloads_the_archive_first() {
     assert_eq!(std::fs::read(h.root.join("versions/From Project/mods/a.jar")).unwrap(), a);
     assert!(!h.root.join(".pcl-tmp").join(format!("pack-{id}")).exists(), "temp archive removed");
 }
+
+/// Sync Tauri commands (`install_vanilla`, `install_loader`, ...) run on the main thread, which has
+/// no Tokio runtime. `Manager::spawn` used to call `tokio::spawn` directly and would panic there.
+#[test]
+fn manager_spawn_works_without_a_tokio_context() {
+    let h = Harness::new();
+    assert!(tokio::runtime::Handle::try_current().is_err(), "this test must run outside a runtime");
+    let id = h.ctx.mgr.spawn("probe", "probe", |_| async { Ok(()) });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while h.names("download://finished").is_empty() {
+        assert!(std::time::Instant::now() < deadline, "task never finished (status {:?})", h.ctx.mgr.info(&id).unwrap().status);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(format!("{:?}", h.ctx.mgr.info(&id).unwrap().status), "Completed");
+}

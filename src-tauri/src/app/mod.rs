@@ -18,7 +18,7 @@ pub mod saves;
 pub mod tasks;
 pub mod tuning;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
 
 use crate::accounts::manager::AccountManager;

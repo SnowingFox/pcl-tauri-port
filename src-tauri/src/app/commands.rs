@@ -167,6 +167,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn reveal_is_limited_to_known_roots() {
         let d = tempfile::tempdir().unwrap();

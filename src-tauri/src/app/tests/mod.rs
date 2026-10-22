@@ -108,10 +108,18 @@ impl Harness {
         j
     }
 
+    /// Wait until the task is done *and* its `download://finished` event went out (the manager flips
+    /// the status first and runs the finish hook right after).
     pub async fn finish(&self, task_id: &str) -> TaskInfo {
-        tokio::time::timeout(std::time::Duration::from_secs(60), tasks::wait_finished(&self.ctx.mgr, task_id))
+        let info = tokio::time::timeout(std::time::Duration::from_secs(60), tasks::wait_finished(&self.ctx.mgr, task_id))
             .await
-            .expect("task did not finish in time")
+            .expect("task did not finish in time");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !self.names("download://finished").iter().any(|e| e["task_id"] == json!(task_id)) {
+            assert!(std::time::Instant::now() < deadline, "no download://finished for {task_id}");
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        info
     }
 }
 

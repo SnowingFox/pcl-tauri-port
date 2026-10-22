@@ -214,3 +214,48 @@ async fn real_loader_install_and_launch() {
     let tail = lines.iter().rev().take(30).rev().cloned().collect::<Vec<_>>().join("\n");
     assert!(lines.iter().any(|l| l.contains("Setting user")), "client never reached 'Setting user'; tail:\n{tail}");
 }
+
+/// Third-party account: the real authlib-injector artifact is fetched through the engine (sha256
+/// checked) and a real client is started with it as `-javaagent` against a local Yggdrasil mock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs network access and PCL_E2E_JAVA"]
+async fn real_thirdparty_account_launch_with_authlib_injector() {
+    let Some(h) = real_harness() else { return eprintln!("PCL_E2E_JAVA not set, skipping") };
+    let mc = std::env::var("PCL_E2E_MC").unwrap_or_else(|_| "1.21.4".into());
+    let id = ainstall::install_game(&h.ctx, mc.clone(), None, Some("E2E Ygg".into())).await.unwrap();
+    assert_eq!(format!("{:?}", wait_task(&h, &id, "vanilla install").await.status), "Completed");
+
+    let ygg = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"meta":{"serverName":"E2E Skins"},"skinDomains":["127.0.0.1"]}"#)).mount(&ygg).await;
+    Mock::given(method("POST")).and(path("/authserver/authenticate")).respond_with(ResponseTemplate::new(200).set_body_string(
+        r#"{"accessToken":"e2e-ygg-access-token-123456","clientToken":"e2e-client-token","selectedProfile":{"id":"0123456789abcdef0123456789abcdef","name":"SkinPlayer"}}"#)).mount(&ygg).await;
+    Mock::given(method("POST")).and(path("/authserver/validate")).respond_with(ResponseTemplate::new(204)).mount(&ygg).await;
+    let acc = h.ctx.accounts().unwrap().add_yggdrasil(&ygg.uri(), "e2e@example.org", "pw").await.unwrap().remove(0);
+
+    let jar = paths::authlib_injector_jar(&h.ctx.data_dir);
+    assert!(!jar.exists(), "the injector must be downloaded by the launch pipeline");
+    let inst = h.root.join("versions/E2E Ygg").to_string_lossy().into_owned();
+    let lid = crate::app::launch::launch(&h.ctx, &inst, &acc.id, Some("e2e-ygg".into())).await.expect("launch");
+    assert!(std::fs::metadata(&jar).unwrap().len() > 10_000, "real injector jar downloaded");
+    eprintln!("injector jar: {} bytes", std::fs::metadata(&jar).unwrap().len());
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    let lines = loop {
+        let lines: Vec<String> = h.names("launch://log").iter().map(|e| e["line"].as_str().unwrap_or("").to_string()).collect();
+        if lines.iter().any(|l| l.contains("Backend library")) || !h.names("launch://exit").is_empty() || std::time::Instant::now() > deadline {
+            break lines;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    };
+    let _ = crate::launch::kill_by_id(&lid);
+    h.wait_event("launch://exit", 30).await;
+    for l in lines.iter().filter(|l| l.contains("authlib-injector") || l.contains("Setting user")).take(5) {
+        eprintln!("  game: {l}");
+    }
+    let tail = lines.iter().rev().take(30).rev().cloned().collect::<Vec<_>>().join("\n");
+    assert!(lines.iter().any(|l| l.contains("-javaagent:") && l.contains("authlib-injector.jar")), "javaagent missing from the command line");
+    assert!(lines.iter().any(|l| l.contains("[authlib-injector]")), "the injector did not start; tail:\n{tail}");
+    assert!(lines.iter().any(|l| l.contains("Setting user: SkinPlayer")), "client did not start with the third-party profile; tail:\n{tail}");
+    let all = lines.join("\n");
+    assert!(!all.contains("e2e-ygg-access-token-123456"), "access token leaked into the game log");
+}

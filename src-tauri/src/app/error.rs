@@ -71,6 +71,7 @@ impl From<crate::accounts::AccountError> for AppError {
             E::NeedRelogin | E::Declined | E::DeviceCodeExpired => {
                 Self::new("ACCOUNT_EXPIRED", "登录已过期，请重新登录该账号")
             }
+            E::MissingClientId => Self::new("MS_CLIENT_ID_MISSING", "未配置 Microsoft 登录所需的应用 Client ID，无法使用微软账号启动"),
             E::Network(_) => Self::new("NETWORK", format!("网络错误：{msg}")),
             E::Io(_) => Self::new("IO", msg),
             other => Self::new("ACCOUNT_ERROR", format!("账号错误：{other}")),
@@ -142,4 +143,38 @@ pub fn into_task_error(e: AppError) -> crate::download::error::DlError {
         return crate::download::error::DlError::Cancelled;
     }
     crate::download::error::DlError::Other(format!("{}: {}", e.code, e.message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::accounts::AccountError as A;
+
+    #[test]
+    fn account_errors_map_to_stable_codes() {
+        let code = |e: A| AppError::from(e).code;
+        assert_eq!(code(A::NeedRelogin), "ACCOUNT_EXPIRED");
+        assert_eq!(code(A::NotFound("x".into())), "ACCOUNT_NOT_FOUND");
+        assert_eq!(code(A::MissingClientId), "MS_CLIENT_ID_MISSING");
+        assert_eq!(code(A::Network("down".into())), "NETWORK");
+        assert_eq!(code(A::NotOwned), "ACCOUNT_ERROR");
+    }
+
+    #[test]
+    fn task_errors_round_trip_their_code() {
+        use crate::download::error::DlError;
+        let e = into_task_error(AppError::new("MANUAL_DOWNLOAD_REQUIRED", "need hand download"));
+        let back = AppError::from(&e);
+        assert_eq!((back.code, back.message.as_str()), ("MANUAL_DOWNLOAD_REQUIRED", "need hand download"));
+        assert_eq!(AppError::from(&DlError::Cancelled).code, "CANCELLED");
+        assert_eq!(AppError::from(&DlError::Other("random text: with colon".into())).code, "DOWNLOAD_FAILED");
+        assert_eq!(AppError::from(&DlError::Status(404, "u".into())).code, "NETWORK");
+    }
+
+    #[test]
+    fn messages_are_masked() {
+        crate::app::logging::register_secret("error-secret-token-424242");
+        let e = AppError::new("INTERNAL", "boom error-secret-token-424242");
+        assert_eq!(e.message, "boom ***");
+    }
 }
