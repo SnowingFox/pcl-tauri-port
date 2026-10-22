@@ -67,7 +67,9 @@ fn payload(n: usize) -> Vec<u8> {
     (0..n).map(|i| (i * 31 % 251) as u8).collect()
 }
 
-fn setup() -> (reqwest::Client, EngineConfig, TaskCtl, Arc<Tracker>, Arc<std::sync::Mutex<Vec<ProgressEvent>>>) {
+type Events = Arc<std::sync::Mutex<Vec<ProgressEvent>>>;
+
+fn setup() -> (reqwest::Client, EngineConfig, TaskCtl, Arc<Tracker>, Events) {
     let events = Arc::new(std::sync::Mutex::new(vec![]));
     let e2 = events.clone();
     let ctl = TaskCtl::new();

@@ -52,11 +52,10 @@ pub fn native_jars(v: &ResolvedVersion, libraries_dir: &Path, ctx: &RuleContext)
         if let Some((rel, _)) = lib.native_artifact(ctx) {
             let excl = lib.extract.as_ref().map(|e| e.exclude.clone()).unwrap_or_default();
             out.push((libraries_dir.join(rel), excl, false));
-        } else if lib.is_new_style_native() {
-            if let Some(rel) = lib.classpath_rel_path() {
+        } else if lib.is_new_style_native()
+            && let Some(rel) = lib.classpath_rel_path() {
                 out.push((libraries_dir.join(rel), vec![], true));
             }
-        }
     }
     out
 }

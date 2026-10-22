@@ -107,14 +107,13 @@ pub fn find_java(explicit: Option<&str>) -> String {
             return p.to_string_lossy().into_owned();
         }
     }
-    if let Ok(o) = std::process::Command::new("/usr/libexec/java_home").output() {
-        if o.status.success() {
+    if let Ok(o) = std::process::Command::new("/usr/libexec/java_home").output()
+        && o.status.success() {
             let p = Path::new(String::from_utf8_lossy(&o.stdout).trim()).join("bin/java");
             if p.is_file() {
                 return p.to_string_lossy().into_owned();
             }
         }
-    }
     "java".into()
 }
 
@@ -150,14 +149,13 @@ async fn fetch_profile_libs(ctx: &TaskCtx, libs_raw: &[Value], installer: &Path,
     let mut bundled = vec![];
     for l in libs_raw {
         let lib: crate::download::manifest::Library = serde_json::from_value(l.clone())?;
-        if let Some(a) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) {
-            if a.url.is_empty() {
+        if let Some(a) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref())
+            && a.url.is_empty() {
                 if let Some(p) = a.path.clone().or_else(|| maven_path(&lib.name)).filter(|p| crate::settings::guard::is_safe_rel(p)) {
                     bundled.push(p);
                 }
                 continue;
             }
-        }
         for f in lib.files(os, arch) {
             files.push(FileSpec::new(f.url, libdir.join(&f.path)).with_sha1(f.sha1).with_size(f.size));
         }

@@ -20,11 +20,10 @@ pub fn find_json(version_dir: &Path, name: &str) -> Result<PathBuf, String> {
         .collect();
     candidates.sort();
     for p in candidates {
-        if let Ok(v) = read_json_value(&p) {
-            if v.get("mainClass").is_some() && v.get("type").is_some() && v.get("id").is_some() {
+        if let Ok(v) = read_json_value(&p)
+            && v.get("mainClass").is_some() && v.get("type").is_some() && v.get("id").is_some() {
                 return Ok(p);
             }
-        }
     }
     Err(format!("未找到版本 JSON 文件：{name}.json"))
 }

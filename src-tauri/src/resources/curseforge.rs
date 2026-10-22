@@ -158,11 +158,10 @@ pub async fn files_by_ids(ids: &[u64]) -> Result<Vec<ResourceFile>> {
 /// Resolve a download URL: field from the file listing, else GET download-url, else CDN fallback.
 pub async fn resolve_download_url(mod_id: &str, file_id: u64, file_name: &str) -> Result<String> {
     let path = format!("/mods/{}/files/{file_id}/download-url", urlencode(mod_id));
-    if let Ok(v) = send_json(client_req(reqwest::Method::GET, &path)?).await {
-        if let Some(u) = v["data"].as_str().filter(|x| !x.is_empty()) {
+    if let Ok(v) = send_json(client_req(reqwest::Method::GET, &path)?).await
+        && let Some(u) = v["data"].as_str().filter(|x| !x.is_empty()) {
             return Ok(u.to_string());
         }
-    }
     Ok(fallback_download_url(file_id, file_name))
 }
 

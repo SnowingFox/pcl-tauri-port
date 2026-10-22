@@ -110,11 +110,10 @@ pub fn migrate(mut doc: Value) -> Value {
     if version < 1 {
         let mut out = json!({ "schema_version": 1 });
         if let Some(obj) = doc.as_object_mut() {
-            if let Some(Value::String(p)) = obj.remove("java_path") {
-                if !p.is_empty() {
+            if let Some(Value::String(p)) = obj.remove("java_path")
+                && !p.is_empty() {
                     out["java"] = json!({ "selected": p });
                 }
-            }
             if let Some(mb) = obj.remove("memory_mb").and_then(|v| v.as_u64()) {
                 out["memory"] = json!({ "mode": "custom", "custom_mb": mb });
             }
@@ -200,6 +199,8 @@ impl SettingsStore {
     }
 
     /// Merge a partial JSON patch (objects merge recursively, everything else replaces).
+    /// The command layer merges and checks the result itself (`settings_patch`); kept for tests.
+    #[allow(dead_code)]
     pub fn patch(&self, patch: Value) -> Result<GlobalSettings, SettingsError> {
         let mut doc = serde_json::to_value(self.get())?;
         merge(&mut doc, patch);

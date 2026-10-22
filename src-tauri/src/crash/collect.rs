@@ -77,7 +77,7 @@ pub fn candidate_paths(game_dir: &Path, root: &Path) -> Vec<PathBuf> {
         v.extend(
             rd.flatten()
                 .map(|e| e.path())
-                .filter(|p| p.is_file() && p.file_name().and_then(|n| n.to_str()).map_or(false, |n| n.starts_with("hs_err"))),
+                .filter(|p| p.is_file() && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("hs_err"))),
         );
     }
     v.push(game_dir.join("logs").join("latest.log"));
@@ -161,7 +161,7 @@ pub fn collect(paths: &[PathBuf], recent_only: bool, live_output: Option<&[Strin
                 if !got {
                     mc.push_str(&head_tail_lines(&f.2, 0, 500));
                 }
-                mc = mc.trim_end_matches(|c| c == '\r' || c == '\n').to_string();
+                mc = mc.trim_end_matches(['\r', '\n']).to_string();
                 break;
             }
         }

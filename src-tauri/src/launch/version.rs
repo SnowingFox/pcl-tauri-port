@@ -172,17 +172,15 @@ impl OsRule {
             if base != ctx.os_name {
                 return false;
             }
-            if let Some(a) = arch_suffix {
-                if !arch_eq(a, &ctx.arch) {
+            if let Some(a) = arch_suffix
+                && !arch_eq(a, &ctx.arch) {
                     return false;
                 }
-            }
         }
-        if let Some(arch) = &self.arch {
-            if !arch_eq(arch, &ctx.arch) {
+        if let Some(arch) = &self.arch
+            && !arch_eq(arch, &ctx.arch) {
                 return false;
             }
-        }
         true
     }
 }
@@ -198,11 +196,10 @@ fn arch_eq(rule_arch: &str, ctx_arch: &str) -> bool {
 
 impl Rule {
     fn matches(&self, ctx: &RuleContext) -> bool {
-        if let Some(os) = &self.os {
-            if !os.matches(ctx) {
+        if let Some(os) = &self.os
+            && !os.matches(ctx) {
                 return false;
             }
-        }
         if let Some(features) = &self.features {
             for (k, want) in features {
                 if ctx.features.get(k).copied().unwrap_or(false) != *want {
@@ -294,11 +291,10 @@ impl Library {
     pub fn classpath_artifact(&self) -> Option<Artifact> {
         let rel = self.classpath_rel_path()?;
         let mut art = self.artifact().cloned().unwrap_or_default();
-        if art.url.is_none() {
-            if let Some(base) = &self.url {
+        if art.url.is_none()
+            && let Some(base) = &self.url {
                 art.url = Some(format!("{}/{}", base.trim_end_matches('/'), rel));
             }
-        }
         art.path = Some(rel);
         Some(art)
     }

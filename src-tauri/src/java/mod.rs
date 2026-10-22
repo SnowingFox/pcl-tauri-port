@@ -24,7 +24,7 @@ pub struct JavaInfo {
 /// "1.8.0_351" -> 8, "17.0.2" -> 17, "21" -> 21, "9-ea" -> 9, "25-beta" -> 25.
 pub fn parse_major(version: &str) -> Option<u32> {
     let v = version.trim().trim_matches('"');
-    let mut parts = v.split(|c: char| c == '.' || c == '_' || c == '-' || c == '+');
+    let mut parts = v.split(['.', '_', '-', '+']);
     let first: u32 = parts.next()?.parse().ok()?;
     if first == 1 {
         parts.next()?.parse().ok()
@@ -173,11 +173,10 @@ pub fn inspect(path: &Path) -> Option<JavaInfo> {
     let mut version = release_value(&release, "JAVA_VERSION");
     let mut vendor = release_value(&release, "IMPLEMENTOR").unwrap_or_default();
     let mut arch = release_value(&release, "OS_ARCH").map(|a| normalize_arch(&a));
-    if let Some(a) = binary_arch(&exe) {
-        if a != "unknown" {
+    if let Some(a) = binary_arch(&exe)
+        && a != "unknown" {
             arch = Some(a);
         }
-    }
     if version.is_none() {
         // The macOS /usr/bin/java stub may pop an installer dialog; callers filter it out.
         let out = Command::new(&exe).arg("-version").output().ok()?;
@@ -298,7 +297,7 @@ fn native_arch() -> &'static str {
 /// smallest newer one. Native-arch builds are preferred; x64 on arm64 (Rosetta)
 /// works but is only used if nothing else matches. Returns None if no
 /// installed Java has major >= required.
-pub fn select_for<'a>(javas: &'a [JavaInfo], required_major: u32) -> Option<&'a JavaInfo> {
+pub fn select_for(javas: &[JavaInfo], required_major: u32) -> Option<&JavaInfo> {
     let native = native_arch();
     javas
         .iter()

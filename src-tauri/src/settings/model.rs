@@ -5,16 +5,12 @@ pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct McFolderEntry {
     pub name: String,
     pub path: String,
 }
 
-impl Default for McFolderEntry {
-    fn default() -> Self {
-        Self { name: String::new(), path: String::new() }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]

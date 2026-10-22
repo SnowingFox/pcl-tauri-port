@@ -138,32 +138,28 @@ pub fn parse_jar_meta(bytes: &[u8]) -> ModMeta {
         Err(_) => return ModMeta::default(),
     };
     let text = |z: &mut zip::ZipArchive<_>, n: &str| read_entry(z, n).map(|b| String::from_utf8_lossy(&b).trim_start_matches('\u{feff}').to_string());
-    if let Some(t) = text(&mut z, "fabric.mod.json") {
-        if let Some(m) = parse_fabric_json(&t) {
+    if let Some(t) = text(&mut z, "fabric.mod.json")
+        && let Some(m) = parse_fabric_json(&t) {
             return m;
         }
-    }
-    if let Some(t) = text(&mut z, "quilt.mod.json") {
-        if let Some(m) = parse_quilt_json(&t) {
+    if let Some(t) = text(&mut z, "quilt.mod.json")
+        && let Some(m) = parse_quilt_json(&t) {
             return m;
         }
-    }
     let mf = text(&mut z, "META-INF/MANIFEST.MF").and_then(|t| manifest_version(&t));
     for (path, loader) in [
         ("META-INF/neoforge.mods.toml", ModLoader::NeoForge),
         ("META-INF/mods.toml", ModLoader::Forge),
     ] {
-        if let Some(t) = text(&mut z, path) {
-            if let Some(m) = parse_mods_toml(&t, loader, mf.as_deref()) {
+        if let Some(t) = text(&mut z, path)
+            && let Some(m) = parse_mods_toml(&t, loader, mf.as_deref()) {
                 return m;
             }
-        }
     }
-    if let Some(t) = text(&mut z, "mcmod.info") {
-        if let Some(m) = parse_mcmod_info(&t) {
+    if let Some(t) = text(&mut z, "mcmod.info")
+        && let Some(m) = parse_mcmod_info(&t) {
             return m;
         }
-    }
     ModMeta::default()
 }
 
@@ -201,7 +197,7 @@ pub fn scan_mods_dir(dir: &Path) -> Result<Vec<LocalMod>> {
             file_name,
         });
     }
-    out.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+    out.sort_by_key(|a| a.file_name.to_lowercase());
     Ok(out)
 }
 
@@ -379,7 +375,7 @@ mod tests {
         let lm = LocalMod { path: "p".into(), file_name: "a.jar".into(), enabled: true, size: 0, sha1: "old".into(), curseforge_fingerprint: 0, meta: ModMeta::default() };
         let cur = [("old".to_string(), mk("old", "2024-01-01", true))].into();
         let newer = [("old".to_string(), mk("new", "2024-06-01", true))].into();
-        assert_eq!(compute_updates(&[lm.clone()], &cur, &newer).len(), 1);
+        assert_eq!(compute_updates(std::slice::from_ref(&lm), &cur, &newer).len(), 1);
         let same = [("old".to_string(), mk("old", "2024-06-01", true))].into();
         assert!(compute_updates(&[lm], &cur, &same).is_empty());
     }

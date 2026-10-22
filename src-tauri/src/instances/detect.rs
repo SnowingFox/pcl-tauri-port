@@ -222,13 +222,11 @@ pub fn detect_mc_version(json: &Value, dir_name: &str) -> Option<String> {
         for lib in libs {
             let Some(name) = lib.get("name").and_then(Value::as_str) else { continue };
             if let Some((g, a, v)) = coord(name) {
-                if (g == "net.minecraftforge" && (a == "forge" || a == "fmlloader")) || (g == "optifine" && a == "OptiFine") {
-                    if let Some(mc) = v.split(|c| c == '-' || c == '_').next() {
-                        if rel.is_match(mc) {
+                if ((g == "net.minecraftforge" && (a == "forge" || a == "fmlloader")) || (g == "optifine" && a == "OptiFine"))
+                    && let Some(mc) = v.split(['-', '_']).next()
+                        && rel.is_match(mc) {
                             return Some(mc.into());
                         }
-                    }
-                }
                 if g == "net.minecraft" && a == "client" {
                     return Some(v.into());
                 }

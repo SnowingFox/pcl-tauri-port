@@ -26,6 +26,8 @@ pub struct EngineConfig {
     pub min_segment: u64,
     /// Attempts per candidate URL.
     pub retries: u32,
+    /// Informational: the shared client's User-Agent is fixed when `Manager` builds it.
+    #[allow(dead_code)]
     pub user_agent: String,
 }
 
@@ -194,7 +196,7 @@ impl Tracker {
         self.emit(false);
     }
     pub fn sub_bytes(&self, n: u64) {
-        let _ = self.done_bytes.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(n)));
+        let _ = self.done_bytes.try_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(n)));
     }
     pub fn file_done(&self) {
         self.done_files.fetch_add(1, Ordering::Relaxed);
@@ -248,11 +250,10 @@ pub async fn is_valid(spec: &FileSpec) -> bool {
     if !meta.is_file() {
         return false;
     }
-    if let Some(sz) = spec.size {
-        if meta.len() != sz {
+    if let Some(sz) = spec.size
+        && meta.len() != sz {
             return false;
         }
-    }
     if let Some(h) = &spec.sha1 {
         return file_hash(HashKind::Sha1, spec.dest.clone()).await.map(|a| a.eq_ignore_ascii_case(h)).unwrap_or(false);
     }
@@ -265,11 +266,10 @@ pub async fn is_valid(spec: &FileSpec) -> bool {
 
 async fn verify(spec: &FileSpec, path: &Path) -> DlResult<()> {
     let meta = tokio::fs::metadata(path).await?;
-    if let Some(sz) = spec.size {
-        if meta.len() != sz {
+    if let Some(sz) = spec.size
+        && meta.len() != sz {
             return Err(DlError::Size { path: path.display().to_string(), expected: sz, actual: meta.len() });
         }
-    }
     for (kind, exp) in [(HashKind::Sha1, &spec.sha1), (HashKind::Sha256, &spec.sha256)] {
         if let Some(exp) = exp {
             let act = file_hash(kind, path.to_path_buf()).await?;
@@ -324,11 +324,10 @@ pub async fn download_file(
                     tracker.sub_bytes(counted.load(Ordering::Relaxed));
                     last_err = e;
                     // 4xx other than 408/429 will not get better on retry.
-                    if let DlError::Status(c, _) = &last_err {
-                        if (400..500).contains(c) && *c != 408 && *c != 429 {
+                    if let DlError::Status(c, _) = &last_err
+                        && (400..500).contains(c) && *c != 408 && *c != 429 {
                             break;
                         }
-                    }
                     tokio::time::sleep(std::time::Duration::from_millis(200 * (1 << attempt.min(5)))).await;
                 }
             }
@@ -394,11 +393,10 @@ async fn single(
     counted: &Arc<AtomicU64>,
 ) -> DlResult<()> {
     let mut existing = tokio::fs::metadata(part).await.map(|m| m.len()).unwrap_or(0);
-    if let Some(sz) = spec.size {
-        if existing > sz {
+    if let Some(sz) = spec.size
+        && existing > sz {
             existing = 0;
         }
-    }
     let mut req = client.get(url);
     if existing > 0 {
         req = req.header("Range", format!("bytes={existing}-"));

@@ -95,6 +95,7 @@ pub struct AssetIndexRef {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)] // parsed to validate the document shape; not every field is read yet
 pub struct VersionJson {
     pub id: String,
     #[serde(default, rename = "inheritsFrom")]
@@ -188,24 +189,21 @@ impl Library {
         }
         let mut out = vec![];
         if let Some(d) = &self.downloads {
-            if let Some(a) = &d.artifact {
-                if !a.url.is_empty() {
+            if let Some(a) = &d.artifact
+                && !a.url.is_empty() {
                     let path = a.path.clone().or_else(|| maven_path(&self.name));
                     if let Some(path) = path {
                         out.push(LibFile { path, url: a.url.clone(), sha1: a.sha1.clone(), size: a.size });
                     }
                 }
-            }
-            if let (Some(n), Some(c)) = (&self.natives, &d.classifiers) {
-                if let Some(key) = n.get(os) {
+            if let (Some(n), Some(c)) = (&self.natives, &d.classifiers)
+                && let Some(key) = n.get(os) {
                     let key = key.replace("${arch}", if arch == "x86" { "32" } else { "64" });
-                    if let Some(i) = c.get(&key) {
-                        if let Some(path) = i.path.clone().or_else(|| maven_path(&format!("{}:{}", self.name, key))) {
+                    if let Some(i) = c.get(&key)
+                        && let Some(path) = i.path.clone().or_else(|| maven_path(&format!("{}:{}", self.name, key))) {
                             out.push(LibFile { path, url: i.url.clone(), sha1: i.sha1.clone(), size: i.size });
                         }
-                    }
                 }
-            }
             if !out.is_empty() || d.artifact.is_some() {
                 return out;
             }

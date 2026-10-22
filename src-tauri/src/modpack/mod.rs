@@ -83,11 +83,10 @@ impl ModpackInstallPlan {
             for u in &f.urls {
                 crate::settings::guard::check_download_url(u).map_err(|e| format!("{}: {e}", f.path))?;
             }
-            if let Some(h) = f.sha1.as_deref().filter(|h| !h.is_empty()) {
-                if h.len() != 40 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+            if let Some(h) = f.sha1.as_deref().filter(|h| !h.is_empty())
+                && (h.len() != 40 || !h.bytes().all(|b| b.is_ascii_hexdigit())) {
                     return Err(format!("{}: invalid sha1", f.path));
                 }
-            }
         }
         Ok(())
     }

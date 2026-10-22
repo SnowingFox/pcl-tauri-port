@@ -23,6 +23,7 @@ impl ProfileLoader {
             Self::Quilt => "https://meta.quiltmc.org/v3",
         }
     }
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self {
             Self::Fabric => "fabric",
@@ -82,7 +83,7 @@ pub fn parse_forge_list(bytes: &[u8]) -> DlResult<Vec<LoaderVersion>> {
         .iter()
         .filter_map(|e| Some((e["build"].as_i64().unwrap_or(0), e["version"].as_str()?.to_string())))
         .collect();
-    out.sort_by(|a, b| b.0.cmp(&a.0));
+    out.sort_by_key(|e| std::cmp::Reverse(e.0));
     Ok(out.into_iter().map(|(_, version)| LoaderVersion { version, stable: None }).collect())
 }
 

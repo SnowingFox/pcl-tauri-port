@@ -446,7 +446,7 @@ impl<'a> Analyzer<'a> {
             if cr.contains("\tEntity's Exact location: ") {
                 let t = seek(cr, r"\tEntity Type: ([^\n]+) \(").unwrap_or_default();
                 let l = seek(cr, r"\tEntity's Exact location: ([^\n]+)").unwrap_or_default();
-                self.add1(Reason::EntityCrash, format!("{t} ({})", l.trim_end_matches(|c| c == '\r' || c == '\n')));
+                self.add1(Reason::EntityCrash, format!("{t} ({})", l.trim_end_matches(['\r', '\n'])));
             }
         }
     }
@@ -483,12 +483,11 @@ impl<'a> Analyzer<'a> {
                 let fab = "Fabric Mods";
                 let mut start = crash.rfind(MARK).map(|i| i + MARK.len()).unwrap_or(0);
                 let mut is_fabric = false;
-                if let Some(i) = crash.rfind(fab) {
-                    if crash.contains(fab) {
+                if let Some(i) = crash.rfind(fab)
+                    && crash.contains(fab) {
                         is_fabric = true;
                         start = start.max(i + fab.len());
                     }
-                }
                 let details = &crash[start..];
                 let lines: Vec<&str> = details
                     .split('\n')

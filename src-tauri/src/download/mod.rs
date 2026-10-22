@@ -268,13 +268,11 @@ impl Manager {
     /// Version manifest, cached in memory for 5 minutes (and on disk for offline use).
     pub async fn version_manifest(&self, force: bool) -> DlResult<Arc<manifest::VersionManifest>> {
         let mut g = self.manifest_cache.lock().await;
-        if !force {
-            if let Some((t, m)) = g.as_ref() {
-                if t.elapsed().as_secs() < 300 {
+        if !force
+            && let Some((t, m)) = g.as_ref()
+                && t.elapsed().as_secs() < 300 {
                     return Ok(m.clone());
                 }
-            }
-        }
         let cfg = self.cfg();
         let cache_file = cfg.game_dir.join("launcher_version_manifest_cache.json");
         let parsed = match fetch_bytes(&self.client, cfg.source, manifest::MANIFEST_URL).await {
@@ -438,11 +436,10 @@ pub(crate) fn check_file_request(req: &FileRequest, roots: &[PathBuf]) -> Result
     if std::fs::symlink_metadata(&dest).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
         return Err("目标不能是符号链接".into());
     }
-    if let Some(h) = req.sha1.as_deref().filter(|h| !h.is_empty()) {
-        if h.len() != 40 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+    if let Some(h) = req.sha1.as_deref().filter(|h| !h.is_empty())
+        && (h.len() != 40 || !h.chars().all(|c| c.is_ascii_hexdigit())) {
             return Err("sha1 格式无效".into());
         }
-    }
     Ok(dest)
 }
 

@@ -61,11 +61,10 @@ pub fn resolve(p: &Path) -> Result<PathBuf, String> {
 pub fn confine(roots: &[PathBuf], p: &Path) -> Result<PathBuf, String> {
     let r = resolve(p)?;
     for root in roots {
-        if let Ok(rr) = resolve(root) {
-            if r.starts_with(&rr) {
+        if let Ok(rr) = resolve(root)
+            && r.starts_with(&rr) {
                 return Ok(r);
             }
-        }
     }
     Err(format!("路径不在已登记的 Minecraft 文件夹内：{}", p.display()))
 }
@@ -110,12 +109,11 @@ pub fn confine_content(roots: &[PathBuf], p: &Path) -> Result<(PathBuf, usize), 
             },
             _ => 0,
         };
-        if let Some(c) = parts.get(skip).and_then(|s| s.to_str()) {
-            if CONTENT_DIRS.contains(&c) {
+        if let Some(c) = parts.get(skip).and_then(|s| s.to_str())
+            && CONTENT_DIRS.contains(&c) {
                 let depth = parts.len() - skip - 1;
                 return Ok((r.clone(), depth));
             }
-        }
     }
     Err(format!("只能写入 mods、resourcepacks、shaderpacks、saves 或 config 文件夹：{}", p.display()))
 }
@@ -154,13 +152,11 @@ pub fn validate_root_candidate(path: &Path, home: &Path, data_dir: &Path) -> Res
     if p == home {
         return bad("用户主目录");
     }
-    if let Ok(rel) = p.strip_prefix(&home) {
-        if let Some(Component::Normal(first)) = rel.components().next() {
-            if rel.components().count() == 1 && PROTECTED_HOME_DIRS.iter().any(|d| first == *d) {
+    if let Ok(rel) = p.strip_prefix(&home)
+        && let Some(Component::Normal(first)) = rel.components().next()
+            && rel.components().count() == 1 && PROTECTED_HOME_DIRS.iter().any(|d| first == *d) {
                 return bad("受保护的目录");
             }
-        }
-    }
     for s in PROTECTED_SYSTEM_DIRS {
         if p.starts_with(s) {
             return bad("系统目录");
@@ -417,7 +413,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("mods")).unwrap();
-        assert!(confine(&[root.clone()], &root.join("mods/x.jar")).is_err());
+        assert!(confine(std::slice::from_ref(&root), &root.join("mods/x.jar")).is_err());
     }
 
     #[test]

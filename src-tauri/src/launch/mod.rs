@@ -192,11 +192,10 @@ pub fn prepare(req: &LaunchRequest) -> Result<(args::BuiltCommand, PrecheckRepor
     let mc = Path::new(&req.minecraft_dir);
     let cmd = args::build_command(req, &resolved, Path::new(&java.path), &ctx)?;
     natives::extract_natives(&resolved, &mc.join("libraries"), &cmd.natives_dir, &ctx)?;
-    if let Some(id) = resolved.json.asset_index.as_ref().map(|a| a.id.clone()) {
-        if let Ok(idx) = assets::load_index(&mc.join("assets"), &id) {
+    if let Some(id) = resolved.json.asset_index.as_ref().map(|a| a.id.clone())
+        && let Ok(idx) = assets::load_index(&mc.join("assets"), &id) {
             assets::materialize_legacy(&mc.join("assets"), &cmd.working_dir, &idx)?;
         }
-    }
     std::fs::create_dir_all(&cmd.working_dir).map_err(|e| LaunchError::Io(e.to_string()))?;
     Ok((cmd, report))
 }

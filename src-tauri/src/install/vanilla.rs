@@ -122,17 +122,17 @@ pub async fn install_vanilla(ctx: &TaskCtx, mgr: &Arc<Manager>, mc: &str, start:
     }
 
     // 6. logging config
-    if let Some(f) = raw.pointer("/logging/client/file") {
-        if let (Some(id), Some(url)) = (f["id"].as_str().filter(|i| crate::settings::guard::is_safe_component(i)), f["url"].as_str()) {
+    if let Some(f) = raw.pointer("/logging/client/file")
+        && let (Some(id), Some(url)) = (f["id"].as_str().filter(|i| crate::settings::guard::is_safe_component(i)), f["url"].as_str()) {
             ctx.tracker.begin_stage("log-config", at, span * 0.03, 1, 0);
             ctx.file(FileSpec::new(url, gd.join("assets/log_configs").join(id)).with_sha1(f["sha1"].as_str().map(String::from))).await?;
         }
-    }
     ctx.tracker.begin_stage("done", start + span, 0.0, 0, 0);
     Ok(raw)
 }
 
 /// True if the vanilla json + jar are already on disk.
+#[allow(dead_code)] // for the app orchestration layer
 pub fn vanilla_present(game_dir: &Path, mc: &str) -> bool {
     version_json_path(game_dir, mc).is_file() && version_jar_path(game_dir, mc).is_file()
 }
