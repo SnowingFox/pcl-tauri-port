@@ -31,6 +31,7 @@ thiserror = "=2.0.21"
 keyring = { version = "=3.6.3", features = ["apple-native"] }
 url = "=2.5.8"
 reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls"] }
+regex = "=1.12.3"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -43,3 +44,4 @@ strip = true
 
 [dev-dependencies]
 wiremock = "=0.6.5"
+tempfile = "=3.27.0"
