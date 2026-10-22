@@ -60,6 +60,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn data_dir_identifier_matches_tauri_conf() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+        assert_eq!(conf["identifier"], crate::settings::store::APP_IDENTIFIER, "data dir must equal Tauri's app_data_dir");
+    }
+
+    #[test]
     fn migrates_without_overwriting_or_deleting() {
         let d = tempfile::tempdir().unwrap();
         let (old, new) = (d.path().join("old"), d.path().join("new"));

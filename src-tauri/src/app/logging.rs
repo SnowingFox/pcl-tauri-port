@@ -81,10 +81,6 @@ impl<W: Write> Write for MaskingWriter<W> {
 static GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-pub fn log_dir() -> Option<&'static Path> {
-    LOG_DIR.get().map(|p| p.as_path())
-}
-
 /// Install the global subscriber (idempotent) writing to `<dir>/pcl.<date>.log`, keeping 7 files.
 pub fn init(dir: &Path, debug: bool) {
     if LOG_DIR.set(dir.to_path_buf()).is_err() {
@@ -168,6 +164,26 @@ mod tests {
     fn short_values_are_not_registered() {
         register_secret("abc");
         assert_eq!(mask("abc def"), "abc def");
+    }
+
+    #[test]
+    fn panic_hook_writes_a_masked_report() {
+        let d = tempfile::tempdir().unwrap();
+        register_secret("panic-secret-token-98765");
+        install_panic_hook(d.path().to_path_buf());
+        let r = std::thread::Builder::new()
+            .name("boom-thread".into())
+            .spawn(|| {
+                let t = "panic-secret-token-98765";
+                panic!("something broke with {t}");
+            })
+            .unwrap()
+            .join();
+        assert!(r.is_err());
+        let report = std::fs::read_to_string(d.path().join("panic.log")).expect("panic.log written synchronously");
+        assert!(report.contains("something broke with ***"), "{report}");
+        assert!(report.contains("boom-thread") && report.contains("logging.rs"), "thread and location recorded: {report}");
+        assert!(!report.contains("panic-secret-token-98765"));
     }
 
     #[test]

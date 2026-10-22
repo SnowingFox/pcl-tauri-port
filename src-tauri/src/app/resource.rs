@@ -246,12 +246,11 @@ pub async fn plan_install(api: &dyn ResourceApi, inp: &PlanInput<'_>) -> AppResu
             let label = pid.clone().or_else(|| dep.file_id.clone()).unwrap_or_default();
             let resolved: AppResult<ResourceFile> = async {
                 // An exact version the author pinned wins when it fits this instance.
-                if let Some(fid) = &dep.file_id {
-                    if let Ok(f) = api.version(file.platform, fid).await {
-                        if compatible(&f, inp.mc, mod_loader) {
-                            return Ok(f);
-                        }
-                    }
+                if let Some(fid) = &dep.file_id
+                    && let Ok(f) = api.version(file.platform, fid).await
+                    && compatible(&f, inp.mc, mod_loader)
+                {
+                    return Ok(f);
                 }
                 let pid = pid.as_deref().ok_or_else(|| no_version("依赖项"))?;
                 let all = candidates(api, file.platform, pid, inp.mc, mod_loader).await?;

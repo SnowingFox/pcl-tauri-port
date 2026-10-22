@@ -6,6 +6,7 @@
 
 mod e2e;
 mod install_flow;
+mod ipc;
 mod launch_flow;
 
 use super::*;
@@ -135,8 +136,6 @@ pub struct Served {
     pub server: MockServer,
     pub manifest_url: String,
     pub version_json: String,
-    pub client_jar: Vec<u8>,
-    pub lib_jar: Vec<u8>,
 }
 
 fn sha(b: &[u8]) -> String {
@@ -173,14 +172,14 @@ pub async fn serve_vanilla(id: &str) -> Served {
     for (p, body) in [
         ("/manifest.json".to_string(), manifest.into_bytes()),
         (format!("/v/{id}.json"), version_json.clone().into_bytes()),
-        (format!("/{id}/client.jar"), client_jar.clone()),
-        ("/lib/a.jar".to_string(), lib_jar.clone()),
+        (format!("/{id}/client.jar"), client_jar),
+        ("/lib/a.jar".to_string(), lib_jar),
         ("/assets/idx.json".to_string(), index),
     ] {
         Mock::given(method("GET")).and(path(p)).respond_with(ResponseTemplate::new(200).set_body_bytes(body)).mount(&server).await;
     }
     let manifest_url = format!("{base}/manifest.json");
-    Served { server, manifest_url, version_json, client_jar, lib_jar }
+    Served { server, manifest_url, version_json }
 }
 
 /// Write just the version json, as a user would have after an interrupted install.

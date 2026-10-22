@@ -53,5 +53,6 @@ panic = "abort"
 strip = true
 
 [dev-dependencies]
+tauri = { version = "2", features = ["test"] }
 wiremock = "=0.6.5"
 tempfile = "=3.27.0"

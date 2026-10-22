@@ -26,13 +26,14 @@ where
     }
 }
 
-/// Poll until the manager reports the task as finished (for tests and simple callers).
+/// Poll until the manager reports the task as finished.
+#[cfg(test)]
 pub async fn wait_finished(mgr: &Arc<Manager>, task_id: &str) -> crate::download::TaskInfo {
     loop {
-        if let Ok(i) = mgr.info(task_id) {
-            if !matches!(i.status, crate::download::TaskStatus::Running | crate::download::TaskStatus::Paused) {
-                return i;
-            }
+        if let Ok(i) = mgr.info(task_id)
+            && !matches!(i.status, crate::download::TaskStatus::Running | crate::download::TaskStatus::Paused)
+        {
+            return i;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }

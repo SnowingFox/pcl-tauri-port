@@ -94,7 +94,10 @@ pub struct AssetIndexRef {
     pub size: Option<u64>,
 }
 
+/// Mirror of the parts of a version json the installer reads; `id`, `inheritsFrom` and `logging`
+/// are kept to document the schema (the raw json is what gets written to disk).
 #[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct VersionJson {
     pub id: String,
     #[serde(default, rename = "inheritsFrom")]

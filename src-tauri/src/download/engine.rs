@@ -26,7 +26,6 @@ pub struct EngineConfig {
     pub min_segment: u64,
     /// Attempts per candidate URL.
     pub retries: u32,
-    pub user_agent: String,
 }
 
 impl Default for EngineConfig {
@@ -37,7 +36,6 @@ impl Default for EngineConfig {
             segments: 4,
             min_segment: 2 * 1024 * 1024,
             retries: 3,
-            user_agent: "PCL-Tauri-Port/0.1".into(),
         }
     }
 }
@@ -202,7 +200,7 @@ impl Tracker {
         self.emit(false);
     }
     pub fn sub_bytes(&self, n: u64) {
-        let _ = self.done_bytes.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(n)));
+        let _ = self.done_bytes.try_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(n)));
     }
     pub fn file_done(&self) {
         self.done_files.fetch_add(1, Ordering::Relaxed);

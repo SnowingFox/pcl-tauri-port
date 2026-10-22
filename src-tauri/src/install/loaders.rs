@@ -23,12 +23,6 @@ impl ProfileLoader {
             Self::Quilt => "https://meta.quiltmc.org/v3",
         }
     }
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Fabric => "fabric",
-            Self::Quilt => "quilt",
-        }
-    }
 }
 
 pub fn profile_url(l: ProfileLoader, mc: &str, loader: &str) -> String {

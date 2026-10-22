@@ -37,10 +37,10 @@ pub fn split_args(s: &str) -> Vec<String> {
 /// Physical memory in MiB (best effort, 8 GiB when unknown).
 pub fn physical_memory_mb() -> u64 {
     #[cfg(target_os = "macos")]
-    if let Ok(o) = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).output() {
-        if let Some(b) = String::from_utf8_lossy(&o.stdout).trim().parse::<u64>().ok() {
-            return b / (1024 * 1024);
-        }
+    if let Ok(o) = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).output()
+        && let Ok(b) = String::from_utf8_lossy(&o.stdout).trim().parse::<u64>()
+    {
+        return b / (1024 * 1024);
     }
     #[cfg(target_os = "linux")]
     if let Ok(s) = std::fs::read_to_string("/proc/meminfo") {

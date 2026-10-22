@@ -248,15 +248,18 @@ impl ExitInfo {
     }
 }
 
+pub type LineHook = Arc<dyn Fn(&str, &str) + Send + Sync>;
+pub type ExitHook = Box<dyn FnOnce(&ExitInfo) -> serde_json::Value + Send>;
+
 /// Optional callbacks for [`spawn_cmd`].
 #[derive(Default)]
 pub struct SpawnHooks {
     /// Use this id instead of generating one.
     pub launch_id: Option<String>,
     /// Called for every output line as `(stream, line)`, from the reader threads.
-    pub on_line: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
+    pub on_line: Option<LineHook>,
     /// Called once after the process ended; the returned object's fields are merged into `launch://exit`.
-    pub on_exit: Option<Box<dyn FnOnce(&ExitInfo) -> serde_json::Value + Send>>,
+    pub on_exit: Option<ExitHook>,
 }
 
 const TAIL_LINES: usize = 400;
@@ -368,10 +371,10 @@ pub fn spawn_cmd(
             "crashed": info.crashed(), "crash": serde_json::Value::Null,
             "durationMs": info.duration.as_millis() as u64,
         });
-        if let Some(h) = on_exit {
-            if let (Some(base), serde_json::Value::Object(extra)) = (payload.as_object_mut(), h(&info)) {
-                base.extend(extra);
-            }
+        if let Some(h) = on_exit
+            && let (Some(base), serde_json::Value::Object(extra)) = (payload.as_object_mut(), h(&info))
+        {
+            base.extend(extra);
         }
         emit("launch://exit", payload);
     });

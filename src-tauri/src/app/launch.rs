@@ -136,7 +136,7 @@ pub fn version_chain(root: &Path, name: &str) -> AppResult<Vec<(String, Value)>>
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> AppResult<T> {
-    tokio::task::spawn_blocking(f).await.map_err(|e| AppError::internal(e))
+    tokio::task::spawn_blocking(f).await.map_err(AppError::internal)
 }
 
 /// Download whatever the precheck found missing, through the download engine, and wait for it.
@@ -194,7 +194,7 @@ fn prune_logs(dir: &Path, keep: usize) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut files: Vec<(std::time::SystemTime, PathBuf)> =
         rd.flatten().filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).collect();
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|f| std::cmp::Reverse(f.0));
     for (_, p) in files.into_iter().skip(keep) {
         let _ = std::fs::remove_file(p);
     }
@@ -314,7 +314,7 @@ async fn run(ctx: &AppCtx, g: &crate::settings::GlobalSettings, inst: ResolvedIn
             }
         })
     };
-    let on_line: Arc<dyn Fn(&str, &str) + Send + Sync> = {
+    let on_line: crate::launch::LineHook = {
         let announce = announce.clone();
         Arc::new(move |stream, line| {
             let _ = stream;

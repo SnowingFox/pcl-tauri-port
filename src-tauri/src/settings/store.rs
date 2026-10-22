@@ -160,11 +160,13 @@ pub fn migrate(mut doc: Value) -> Value {
     doc
 }
 
+type ChangeListener = Box<dyn Fn(&GlobalSettings) + Send + Sync>;
+
 /// Thread-safe settings store backed by one JSON file.
 pub struct SettingsStore {
     path: PathBuf,
     inner: Mutex<GlobalSettings>,
-    listeners: Mutex<Vec<Box<dyn Fn(&GlobalSettings) + Send + Sync>>>,
+    listeners: Mutex<Vec<ChangeListener>>,
 }
 
 impl SettingsStore {

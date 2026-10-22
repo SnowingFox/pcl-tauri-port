@@ -130,7 +130,3 @@ pub async fn install_version_files(ctx: &TaskCtx, mc: &str, raw: Value, vj: &Ver
     Ok(raw)
 }
 
-/// True if the vanilla json + jar are already on disk.
-pub fn vanilla_present(game_dir: &Path, mc: &str) -> bool {
-    version_json_path(game_dir, mc).is_file() && version_jar_path(game_dir, mc).is_file()
-}

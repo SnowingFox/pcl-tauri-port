@@ -176,6 +176,7 @@ impl Manager {
     }
 
     /// Point the version manifest lookup somewhere else (test servers). Clears the cache.
+    #[cfg(test)]
     pub fn set_manifest_url(&self, url: &str) {
         *self.manifest_url.lock().unwrap() = url.to_string();
         if let Ok(mut c) = self.manifest_cache.try_lock() {

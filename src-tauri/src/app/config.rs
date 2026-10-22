@@ -35,7 +35,7 @@ pub fn selected_folder(g: &GlobalSettings) -> PathBuf {
         .clone()
         .or_else(|| g.game.folders.first().map(|f| f.path.clone()))
         .map(PathBuf::from)
-        .unwrap_or_else(|| crate::settings::store::default_minecraft_dir())
+        .unwrap_or_else(crate::settings::store::default_minecraft_dir)
 }
 
 pub fn download_config_from(g: &GlobalSettings) -> DownloadConfig {

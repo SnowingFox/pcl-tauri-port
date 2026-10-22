@@ -13,6 +13,7 @@ pub enum HashKind {
 }
 
 /// Hex digest of an in-memory buffer.
+#[cfg(test)]
 pub fn hex_of(kind: HashKind, bytes: &[u8]) -> String {
     match kind {
         HashKind::Sha1 => hex::encode(Sha1::digest(bytes)),

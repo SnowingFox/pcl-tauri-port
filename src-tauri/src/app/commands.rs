@@ -10,7 +10,7 @@ use crate::resources::types::{Platform, ResourceKind};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
 pub type Ctx<'a> = State<'a, Arc<AppCtx>>;
@@ -100,7 +100,7 @@ pub fn validate_url(raw: &str) -> AppResult<url::Url> {
 }
 
 #[tauri::command]
-pub fn app_open_url(app: AppHandle, url: String) -> AppResult<()> {
+pub fn app_open_url<R: tauri::Runtime>(app: tauri::AppHandle<R>, url: String) -> AppResult<()> {
     let u = validate_url(&url)?;
     app.opener().open_url(u.as_str(), None::<&str>).map_err(|e| AppError::new("IO", format!("无法打开链接：{e}")))
 }
@@ -131,7 +131,7 @@ pub fn check_reveal(roots: &[PathBuf], path: &Path) -> AppResult<PathBuf> {
 }
 
 #[tauri::command]
-pub fn app_reveal(app: AppHandle, path: String) -> AppResult<()> {
+pub fn app_reveal<R: tauri::Runtime>(app: tauri::AppHandle<R>, path: String) -> AppResult<()> {
     let real = check_reveal(&reveal_roots(&crate::settings::commands::global().get()), Path::new(&path))?;
     app.opener().reveal_item_in_dir(&real).map_err(|e| AppError::new("IO", format!("无法在 Finder 中显示：{e}")))
 }
@@ -147,5 +147,57 @@ pub fn app_data_dirs() -> DataDirs {
     DataDirs {
         data: crate::settings::store::data_dir().to_string_lossy().into_owned(),
         logs: super::paths::logs_dir(&crate::settings::store::data_dir()).to_string_lossy().into_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_http_urls_are_opened() {
+        for ok in ["https://modrinth.com/mod/sodium", "http://example.org/a?b=c#d", " https://example.org "] {
+            assert!(validate_url(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "file:///etc/passwd", "javascript:alert(1)", "mailto:a@b.c", "ftp://example.org/x", "data:text/html,hi", "vscode://x/y",
+            "x-apple.systempreferences:", "https://", "//example.org", "example.org", "",
+        ] {
+            assert_eq!(validate_url(bad).unwrap_err().code, "INVALID_ARGUMENT", "{bad}");
+        }
+    }
+
+    #[test]
+    fn reveal_is_limited_to_known_roots() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("mc");
+        let outside = d.path().join("outside");
+        std::fs::create_dir_all(root.join("versions/a/mods")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "x").unwrap();
+        let roots = vec![root.canonicalize().unwrap()];
+
+        assert!(check_reveal(&roots, &root.join("versions/a/mods")).is_ok());
+        assert!(check_reveal(&roots, &root).is_ok());
+        assert_eq!(check_reveal(&roots, &outside).unwrap_err().code, "FORBIDDEN_PATH");
+        assert_eq!(check_reveal(&roots, &root.join("../outside/secret.txt")).unwrap_err().code, "FORBIDDEN_PATH", "dot-dot is resolved before the check");
+        assert_eq!(check_reveal(&roots, Path::new("relative/path")).unwrap_err().code, "INVALID_ARGUMENT");
+        assert_eq!(check_reveal(&roots, &root.join("nope")).unwrap_err().code, "NOT_FOUND");
+        // a symlink inside the game dir that points outside must not be a way out
+        std::os::unix::fs::symlink(&outside, root.join("versions/a/link")).unwrap();
+        assert_eq!(check_reveal(&roots, &root.join("versions/a/link/secret.txt")).unwrap_err().code, "FORBIDDEN_PATH");
+        // a sibling that merely shares the prefix is not inside the root
+        std::fs::create_dir_all(d.path().join("mc-evil")).unwrap();
+        assert_eq!(check_reveal(&roots, &d.path().join("mc-evil")).unwrap_err().code, "FORBIDDEN_PATH");
+    }
+
+    #[test]
+    fn reveal_roots_come_from_settings() {
+        let d = tempfile::tempdir().unwrap();
+        let mut g = crate::settings::GlobalSettings::default();
+        g.game.folders = vec![crate::settings::McFolderEntry { name: "x".into(), path: d.path().to_string_lossy().into_owned() }];
+        let roots = reveal_roots(&g);
+        assert!(roots.contains(&d.path().canonicalize().unwrap()));
+        assert!(!roots.contains(&PathBuf::from("/")));
     }
 }
