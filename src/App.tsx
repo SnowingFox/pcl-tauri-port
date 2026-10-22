@@ -1,51 +1,51 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useEffect } from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
+import { Shell } from "./components/Shell";
+import { ThemeEffect } from "./components/ThemeEffect";
+import { Toasts } from "./components/ui";
+import { CrashDialog } from "./pages/others/CrashDialog";
+import LaunchPage from "./pages/launch/LaunchPage";
+import DownloadLayout from "./pages/download/DownloadLayout";
+import InstanceLayout from "./pages/instance/InstanceLayout";
+import SettingsLayout from "./pages/settings/SettingsLayout";
+import OthersLayout from "./pages/others/OthersLayout";
+import { bindGameEvents, useGame } from "./store/game";
+import { useAccounts } from "./store/accounts";
+import { useSettings } from "./store/settings";
+import { useUi } from "./store/ui";
+import { useMockApi } from "./api";
+import { t } from "./i18n";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+export default function App() {
+  const toast = useUi((s) => s.toast);
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    let dead = false;
+    const fail = (e: unknown) => toast(`${t("common.error")}: ${String((e as Error)?.message ?? e)}`, "error");
+    bindGameEvents().then((u) => (dead ? u() : (un = u))).catch(fail);
+    useGame.getState().loadInstances().catch(fail);
+    useAccounts.getState().refresh().catch(fail);
+    useSettings.getState().load().catch(fail);
+    if (useMockApi) toast("当前使用模拟数据（Mock API）", "info", 2500);
+    return () => { dead = true; un?.(); };
+  }, [toast]);
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <>
+      <ThemeEffect />
+      <Routes>
+        <Route element={<Shell />}>
+          <Route index element={<Navigate to="/launch" replace />} />
+          <Route path="launch" element={<LaunchPage />} />
+          <Route path="download/*" element={<DownloadLayout />} />
+          <Route path="instances/*" element={<InstanceLayout />} />
+          <Route path="settings/*" element={<SettingsLayout />} />
+          <Route path="others/*" element={<OthersLayout />} />
+          <Route path="*" element={<Navigate to="/launch" replace />} />
+        </Route>
+      </Routes>
+      <CrashDialog />
+      <Toasts />
+    </>
   );
 }
-
-export default App;
