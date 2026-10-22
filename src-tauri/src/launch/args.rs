@@ -88,6 +88,26 @@ pub fn build_classpath(
     cp
 }
 
+/// Forge / NeoForge 1.17 - 1.20.x start through `cpw.mods.bootstraplauncher`, whose
+/// `-DignoreList=...,${version_name}.jar` makes it skip the client jar on the classpath (Forge loads
+/// the real Minecraft module itself). If the classpath entry has any other name - e.g. the inherited
+/// `1.20.1.jar` of a differently named instance - the vanilla jar is loaded a second time and the
+/// game dies with "Module minecraft contains package ..., module _1._20._1 exports package ...".
+/// PCL keeps such an instance's own `<name>.jar`; HMCL copies the vanilla jar to it. So do we.
+pub fn client_jar_is_version_named(v: &ResolvedVersion) -> bool {
+    let Some(a) = &v.json.arguments else { return false };
+    a.jvm.iter().any(|item| match item {
+        ArgItem::Plain(s) => s.contains("${version_name}.jar"),
+        ArgItem::Conditional { value: ArgValue::One(s), .. } => s.contains("${version_name}.jar"),
+        ArgItem::Conditional { value: ArgValue::Many(v), .. } => v.iter().any(|s| s.contains("${version_name}.jar")),
+    })
+}
+
+/// Id of the version folder whose `<id>.jar` goes on the classpath.
+pub fn client_jar_id(v: &ResolvedVersion) -> &str {
+    if client_jar_is_version_named(v) { &v.id } else { &v.jar_id }
+}
+
 pub struct BuiltCommand {
     pub java: PathBuf,
     pub args: Vec<String>,
@@ -117,7 +137,7 @@ pub fn build_command(
     let mc = Path::new(&req.minecraft_dir);
     let libraries_dir = mc.join("libraries");
     let assets_root = mc.join("assets");
-    let jar = version_jar_path(mc, &v.jar_id);
+    let jar = version_jar_path(mc, client_jar_id(v));
     let game_dir = req
         .game_dir
         .as_ref()
@@ -314,6 +334,35 @@ mod tests {
         assert!(a.contains(&"token:SECRET:123e4567e89b12d3a456426614174000".to_string()));
         assert!(c.display(&r.auth).contains("***"));
         assert!(!c.display(&r.auth).contains("SECRET"));
+    }
+
+    /// Shape of the Forge 1.17-1.20.x loader json: BootstrapLauncher + ignoreList naming the client jar.
+    const FORGE_BOOTSTRAP_CHILD: &str = r#"{
+      "id": "My Forge", "inheritsFrom": "1.20.1", "type": "release",
+      "mainClass": "cpw.mods.bootstraplauncher.BootstrapLauncher",
+      "arguments": {"game": ["--launchTarget", "forgeclient"],
+        "jvm": ["-DignoreList=bootstraplauncher,securejarhandler,forge-,${version_name}.jar", "-DlibraryDirectory=${library_directory}"]},
+      "libraries": [{"name": "net.minecraftforge:fmlloader:1.20.1-47.4.28"}]}"#;
+
+    fn resolved_forge(id: &str) -> ResolvedVersion {
+        let child = parse_version_json(&FORGE_BOOTSTRAP_CHILD.replace("My Forge", id)).unwrap();
+        let parent = parse_version_json(VANILLA_MODERN).unwrap();
+        resolve_with(id, &|i| Ok(if i == "1.20.1" { parent.clone() } else { child.clone() })).unwrap()
+    }
+
+    #[test]
+    fn bootstrap_launcher_gets_a_classpath_jar_named_after_the_version() {
+        let v = resolved_forge("My Forge");
+        assert_eq!(v.jar_id, "1.20.1", "the client jar is inherited from vanilla ...");
+        assert!(client_jar_is_version_named(&v));
+        let c = build_command(&req(), &v, Path::new("/j/bin/java"), &ctx("osx", "arm64")).unwrap();
+        let cp = &c.args[c.args.iter().position(|x| x == "-cp").unwrap() + 1];
+        assert!(cp.ends_with("/mc/versions/My Forge/My Forge.jar"), "... but the classpath entry must match -DignoreList: {cp}");
+        assert!(c.args.iter().any(|a| a.starts_with("-DignoreList=") && a.ends_with(",My Forge.jar")));
+        // a plain vanilla / Fabric style version keeps using the inherited jar
+        let vanilla = resolved(VANILLA_MODERN);
+        assert!(!client_jar_is_version_named(&vanilla));
+        assert_eq!(client_jar_id(&vanilla), "1.20.1");
     }
 
     #[test]

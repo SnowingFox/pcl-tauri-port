@@ -185,15 +185,37 @@ pub fn prepare(req: &LaunchRequest) -> Result<(args::BuiltCommand, PrecheckRepor
     let java = report.java.clone().ok_or(LaunchError::NoJava(report.required_java_major))?;
     let ctx = RuleContext::current(feature_map(req));
     let mc = Path::new(&req.minecraft_dir);
+    ensure_version_named_client_jar(mc, &resolved)?;
     let cmd = args::build_command(req, &resolved, Path::new(&java.path), &ctx)?;
     natives::extract_natives(&resolved, &mc.join("libraries"), &cmd.natives_dir, &ctx)?;
-    if let Some(id) = resolved.json.asset_index.as_ref().map(|a| a.id.clone()) {
-        if let Ok(idx) = assets::load_index(&mc.join("assets"), &id) {
-            assets::materialize_legacy(&mc.join("assets"), &cmd.working_dir, &idx)?;
-        }
+    if let Some(id) = resolved.json.asset_index.as_ref().map(|a| a.id.clone())
+        && let Ok(idx) = assets::load_index(&mc.join("assets"), &id)
+    {
+        assets::materialize_legacy(&mc.join("assets"), &cmd.working_dir, &idx)?;
     }
     std::fs::create_dir_all(&cmd.working_dir).map_err(|e| LaunchError::Io(e.to_string()))?;
     Ok((cmd, report))
+}
+
+/// Make `versions/<id>/<id>.jar` exist (a copy of the inherited client jar) when the version's
+/// arguments require the classpath jar to be named after the version, see
+/// [`args::client_jar_is_version_named`]. A no-op otherwise and when the copy is already current.
+pub fn ensure_version_named_client_jar(mc: &Path, v: &version::ResolvedVersion) -> Result<(), LaunchError> {
+    if !args::client_jar_is_version_named(v) || v.id == v.jar_id {
+        return Ok(());
+    }
+    let (src, dst) = (version_jar_path(mc, &v.jar_id), version_jar_path(mc, &v.id));
+    let len = |p: &Path| std::fs::metadata(p).map(|m| m.len()).ok();
+    if len(&src).is_none() || len(&src) == len(&dst) {
+        return Ok(()); // nothing to copy from (precheck reports it) or already in place
+    }
+    let io = |e: std::io::Error| LaunchError::Io(format!("{}: {e}", dst.display()));
+    if let Some(dir) = dst.parent() {
+        std::fs::create_dir_all(dir).map_err(io)?;
+    }
+    let tmp = dst.with_extension("jar.tmp");
+    std::fs::copy(&src, &tmp).map_err(io)?;
+    std::fs::rename(&tmp, &dst).map_err(io)
 }
 
 fn feature_map(req: &LaunchRequest) -> HashMap<String, bool> {
@@ -286,6 +308,20 @@ fn log_event(id: &str, stream: &str, line: &str) -> serde_json::Value {
     serde_json::json!({ "id": id, "launchId": id, "stream": stream, "line": line, "level": line_level(stream, line), "ts": now_ms() })
 }
 
+/// Remove loader-search variables inherited from the launcher's own environment.
+///
+/// `DYLD_*` is how cargo, IDE run configurations and developer shells point *their* tools at
+/// libraries. A game that inherits it loads the wrong dylibs or, with JNA < 5.13 (Minecraft 1.20.1
+/// and older), aborts in `dlopen` when the value is long ("snprintf() output has been truncated").
+/// (SIP already strips them for system binaries, but not for a Homebrew / Mojang JVM.)
+pub fn clean_game_env(command: &mut Command, vars: impl Iterator<Item = std::ffi::OsString>) {
+    for k in vars {
+        if k.to_string_lossy().starts_with("DYLD_") {
+            command.env_remove(&k);
+        }
+    }
+}
+
 /// Spawn an already prepared command; streams stdout/stderr as `launch://log`, exit as `launch://exit`.
 pub fn spawn_cmd(
     emit: Emit,
@@ -300,9 +336,10 @@ pub fn spawn_cmd(
     }
     let id = hooks.launch_id.clone().unwrap_or_else(|| next_id(&req.version_id));
     let started = Instant::now();
-    let mut child = Command::new(&cmd.java)
-        .args(&cmd.args)
-        .current_dir(&cmd.working_dir)
+    let mut command = Command::new(&cmd.java);
+    command.args(&cmd.args).current_dir(&cmd.working_dir);
+    clean_game_env(&mut command, std::env::vars_os().map(|(k, _)| k));
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -316,8 +353,12 @@ pub fn spawn_cmd(
     });
     let log_file = Arc::new(Mutex::new(log_file));
     let tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
-    let header = cmd.display(&req.auth);
-    emit("launch://log", log_event(&id, "launcher", &crate::app::logging::mask(&header)));
+    let header = crate::app::logging::mask(&cmd.display(&req.auth));
+    if let Some(f) = log_file.lock().unwrap().as_mut() {
+        // First line of the per-launch log: what was run and where (token already masked).
+        let _ = writeln!(f, "[launcher] cwd={}\n[launcher] {header}", cmd.working_dir.display());
+    }
+    emit("launch://log", log_event(&id, "launcher", &header));
 
     let mut readers = Vec::new();
     for (stream, pipe) in [
@@ -464,6 +505,53 @@ pub fn launch_missing_assets(minecraft_dir: String, version_id: String) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_client_jar_is_copied_once_and_refreshed() {
+        let mc = tempfile::tempdir().unwrap();
+        let write = |id: &str, bytes: &[u8]| {
+            std::fs::create_dir_all(mc.path().join("versions").join(id)).unwrap();
+            std::fs::write(version_jar_path(mc.path(), id), bytes).unwrap();
+        };
+        let forge = |id: &str| -> version::ResolvedVersion {
+            let child = version::parse_version_json(&format!(
+                r#"{{"id":"{id}","inheritsFrom":"1.20.1","mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher","arguments":{{"jvm":["-DignoreList=a,${{version_name}}.jar"]}}}}"#
+            ))
+            .unwrap();
+            let parent = version::parse_version_json(r#"{"id":"1.20.1","mainClass":"net.minecraft.client.main.Main"}"#).unwrap();
+            version::resolve_with(id, &|i| Ok(if i == "1.20.1" { parent.clone() } else { child.clone() })).unwrap()
+        };
+        write("1.20.1", b"vanilla-client-v1");
+        let v = forge("Pack One");
+        ensure_version_named_client_jar(mc.path(), &v).unwrap();
+        let dst = version_jar_path(mc.path(), "Pack One");
+        assert_eq!(std::fs::read(&dst).unwrap(), b"vanilla-client-v1");
+        assert!(!dst.with_extension("jar.tmp").exists());
+        // unchanged source: nothing to do; changed source: refreshed
+        ensure_version_named_client_jar(mc.path(), &v).unwrap();
+        write("1.20.1", b"vanilla-client-v2-longer");
+        ensure_version_named_client_jar(mc.path(), &v).unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap(), b"vanilla-client-v2-longer");
+        // versions that do not ask for it are left alone, and a missing source is not an error here
+        let plain = version::resolve_with("1.20.1", &|_| version::parse_version_json(r#"{"id":"1.20.1","mainClass":"x"}"#)).unwrap();
+        ensure_version_named_client_jar(mc.path(), &plain).unwrap();
+        let other = forge("Pack Two");
+        std::fs::remove_file(version_jar_path(mc.path(), "1.20.1")).unwrap();
+        ensure_version_named_client_jar(mc.path(), &other).unwrap();
+        assert!(!version_jar_path(mc.path(), "Pack Two").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn game_does_not_inherit_dyld_variables() {
+        let mut c = Command::new("/usr/bin/env");
+        c.env("DYLD_FALLBACK_LIBRARY_PATH", "/long/path").env("DYLD_INSERT_LIBRARIES", "/evil.dylib").env("KEEP_ME", "1");
+        clean_game_env(&mut c, ["DYLD_FALLBACK_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "PATH"].iter().map(std::ffi::OsString::from));
+        let out = c.output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(!text.contains("DYLD_"), "{text}");
+        assert!(text.contains("KEEP_ME=1") && text.contains("PATH="), "other variables survive: {text}");
+    }
 
     #[test]
     fn precheck_reports_missing_version() {

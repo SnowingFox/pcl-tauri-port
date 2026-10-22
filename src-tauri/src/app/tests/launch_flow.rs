@@ -189,7 +189,8 @@ async fn kill_escalates_to_sigkill_when_the_game_ignores_sigterm() {
     assert!(t0.elapsed() >= std::time::Duration::from_millis(500), "SIGTERM alone must not have ended it: {:?}", t0.elapsed());
     assert!(t0.elapsed() < std::time::Duration::from_secs(10));
     assert_eq!(exit["crashed"], false, "a user kill is never a crash: {exit}");
-    assert!(crate::launch::launch_list_running().is_empty());
+    // the running table is process-wide (other tests launch in parallel): check this launch only
+    assert!(!crate::launch::launch_list_running().contains(&id));
     assert_eq!(crate::launch::kill_by_id(&id).unwrap_err().to_string(), format!("no such running instance: {id}"));
 }
 

@@ -31,6 +31,13 @@ async fn install_and_launch(h: &mut Harness, mc: &str, loader: Option<ainstall::
     assert_eq!(format!("{:?}", info.status), "Completed", "install failed: {:?}", info.error);
     eprintln!("install of {name} finished");
 
+    // Diagnostic: PCL_E2E_NO_EARLY_WINDOW=1 turns off Forge's early loading screen (it needs a GLFW
+    // monitor at startup), to tell display problems apart from launch-argument problems.
+    if std::env::var_os("PCL_E2E_NO_EARLY_WINDOW").is_some() {
+        let cfg = h.root.join("versions").join(name).join("config");
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::fs::write(cfg.join("fml.toml"), "earlyWindowControl = false\n").unwrap();
+    }
     let acc = h.offline_account("E2EPlayer");
     let inst = h.root.join("versions").join(name).to_string_lossy().into_owned();
     let lid = launch::launch(&h.ctx, &inst, &acc, Some(format!("e2e-{name}").replace(' ', "-"))).await.expect("launch");
@@ -44,6 +51,12 @@ async fn install_and_launch(h: &mut Harness, mc: &str, loader: Option<ainstall::
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    if let Some(header) = h.names("launch://log").into_iter().find(|e| e["stream"] == "launcher") {
+        // JVM options only (up to the classpath / module path), the rest is long and uninteresting
+        let line = header["line"].as_str().unwrap_or("");
+        let jvm: Vec<&str> = line.split(' ').filter(|a| a.starts_with("-X") || a.starts_with("-D") && !a.contains("ignoreList") || *a == "-p" || *a == "-cp").take(40).collect();
+        eprintln!("  launcher jvm options: {}", jvm.join(" "));
     }
     let reached = markers.iter().all(|m| lines.iter().any(|l| l.contains(m)));
     eprintln!("  markers reached: {reached}; {} game lines; exited already: {}", lines.len(), !h.names("launch://exit").is_empty());
@@ -63,6 +76,12 @@ fn real_harness() -> Option<Harness> {
         None => Harness::new(),
     };
     h.ctx.mgr.set_manifest_url(crate::download::manifest::MANIFEST_URL);
+    // Extra JVM options for diagnosing a failing launch, e.g. PCL_E2E_JVM_ARGS="-Djna.debug_load=true".
+    if let Some(extra) = std::env::var("PCL_E2E_JVM_ARGS").ok().filter(|s| !s.is_empty()) {
+        h.ctx.settings.update(|g| g.game.jvm_args = format!("{} {extra}", g.game.jvm_args)).unwrap();
+    }
+    // The product default is "mirror first"; the official Forge maven is throttled on some networks.
+    h.ctx.settings.update(|g| g.download.version_source = crate::settings::DownloadSource::MirrorFirst).unwrap();
     let info = crate::java::inspect(std::path::Path::new(&java)).expect("PCL_E2E_JAVA must point at a java executable or home");
     eprintln!("using Java {} at {}", info.version, info.path);
     h.ctx.discover = Arc::new(move |_| vec![info.clone()]);

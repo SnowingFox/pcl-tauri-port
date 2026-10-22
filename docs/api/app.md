@@ -79,8 +79,20 @@ before the id is known. Pipeline:
 `-javaagent:<jar>=<server>` and `-Dauthlibinjector.yggdrasil.prefetched=...` are put before the
 other JVM arguments. Access tokens are masked in every log line, event and the log file.
 
+Launch-core behaviour worth knowing (found by running real clients, see the report):
+- The game process does **not** inherit `DYLD_*` variables from the launcher. A long
+  `DYLD_FALLBACK_LIBRARY_PATH` (cargo, some IDE/dev shells) makes JNA < 5.13, i.e. Minecraft <= 1.20.x,
+  abort in `dlopen` before the window opens.
+- Forge/NeoForge 1.17-1.20.x (`cpw.mods.bootstraplauncher`, `-DignoreList=...${version_name}.jar`) need
+  the classpath jar to be named after the version. For such versions `versions/<name>/<name>.jar` is
+  created as a copy of the inherited vanilla jar (and refreshed when its size changes) and used on the
+  classpath. Without it the game dies with "Module minecraft contains package ...".
+- The first two lines of `<data>/logs/launch/<launchId>.log` are `[launcher] cwd=...` and the masked
+  command line.
+
 ### `app_launch_kill(launchId) -> void`
-Same as `launch_kill`, but the later `launch://exit` has `crashed: false`.
+Sends SIGTERM and, if the game is still alive after 5 s (hung client, mod ignoring the signal), SIGKILL.
+The later `launch://exit` has `crashed: false` either way. `launch_kill` (the old command) shares the logic.
 
 ### `app_install_game(mcVersion, loader?, instanceName?) -> { taskId: string }`
 `loader: { kind: "fabric"|"quilt"|"forge"|"neoforge", version: string } | null`.
