@@ -78,7 +78,13 @@ export function Dialog({ title, onClose, children, actions, dismissable = true }
   closeRef.current = onClose;
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
-    ref.current?.querySelector<HTMLElement>("input, button, select, textarea")?.focus();
+    // Start in the first form field. Tab-like buttons (e.g. the account type switcher) come before it
+    // in the DOM, so a plain "first focusable" would leave the cursor on a button. Dialogs without
+    // fields (confirmations) still start on their first button.
+    const el = ref.current;
+    (el?.querySelector<HTMLElement>("[data-autofocus]") ??
+      el?.querySelector<HTMLElement>("input:not([type=hidden]):not(:disabled), textarea:not(:disabled), select:not(:disabled)") ??
+      el?.querySelector<HTMLElement>("button:not(:disabled)"))?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && dismissable) closeRef.current();
       if (e.key === "Tab" && ref.current) {
