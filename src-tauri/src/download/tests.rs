@@ -209,3 +209,65 @@ async fn batch_downloads_all_and_pause_resume_works() {
     h.await.unwrap().unwrap();
     assert_eq!(tr.done_files.load(Ordering::SeqCst), 10);
 }
+
+/// Serves `body`; any ranged request that does not start at 0 sends headers and a first
+/// slice, then goes silent with the connection left open (what a stalled CDN edge does).
+async fn stalling_mock(body: Vec<u8>) -> String {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", l.local_addr().unwrap());
+    let body = Arc::new(body);
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = l.accept().await else { return };
+            let body = body.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 8192];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let range = req.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("range: bytes=").map(|r| r.to_string()));
+                let Some(r) = range else { return };
+                let (a, b) = r.trim().split_once('-').unwrap();
+                let (a, b): (usize, usize) = (a.parse().unwrap(), b.parse().unwrap());
+                let part = &body[a..=b];
+                let head = format!(
+                    "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\n\r\n",
+                    part.len(),
+                    a,
+                    b,
+                    body.len()
+                );
+                let _ = s.write_all(head.as_bytes()).await;
+                if a == 0 {
+                    let _ = s.write_all(part).await;
+                    let _ = s.shutdown().await;
+                } else {
+                    let _ = s.write_all(&part[..1000.min(part.len())]).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                }
+            });
+        }
+    });
+    base
+}
+
+/// A segment whose body stalls must fail the attempt (and the download) in bounded time instead of
+/// hanging the install forever. The client's read timeout is what bounds it.
+#[tokio::test]
+async fn stalled_segment_body_fails_in_bounded_time() {
+    let data = payload(100_000);
+    let base = stalling_mock(data.clone()).await;
+    let (_, mut cfg, ctl, tr, _) = setup();
+    cfg.retries = 2;
+    let client = reqwest::Client::builder().read_timeout(std::time::Duration::from_secs(1)).build().unwrap();
+    let d = tempfile::tempdir().unwrap();
+    let dest = d.path().join("stall.bin");
+    let spec =
+        FileSpec::new(format!("{base}/data"), &dest).with_size(Some(data.len() as u64)).with_sha1(Some(hex_of(HashKind::Sha1, &data)));
+    let r = tokio::time::timeout(std::time::Duration::from_secs(30), download_file(&client, &cfg, &spec, &ctl, &tr)).await;
+    match r {
+        Err(_) => panic!("download_file still running after 30s: a stalled body is not bounded by the read timeout"),
+        Ok(Ok(())) => panic!("a stalled segment must not produce a successful download"),
+        Ok(Err(e)) => eprintln!("failed as expected: {e}"),
+    }
+    assert!(!dest.exists(), "no corrupt file may be left at the destination");
+}
