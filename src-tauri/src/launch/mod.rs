@@ -11,11 +11,12 @@ pub mod version;
 
 use crate::java::{self, JavaInfo};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use version::{resolve_version, version_jar_path, RuleContext};
 
@@ -202,17 +203,14 @@ fn feature_map(req: &LaunchRequest) -> HashMap<String, bool> {
     m
 }
 
-#[derive(Serialize, Clone)]
-struct LogEvent<'a> {
-    id: &'a str,
-    stream: &'a str,
-    line: &'a str,
-}
+/// Event sink abstraction so the launch pipeline can run (and be tested) without a Tauri runtime.
+pub type Emit = Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>;
 
-#[derive(Serialize, Clone)]
-struct ExitEvent<'a> {
-    id: &'a str,
-    code: Option<i32>,
+pub fn tauri_emit(app: &AppHandle) -> Emit {
+    let app = app.clone();
+    Arc::new(move |ev, v| {
+        let _ = app.emit(ev, v);
+    })
 }
 
 fn running() -> &'static Mutex<HashMap<String, u32>> {
@@ -220,17 +218,85 @@ fn running() -> &'static Mutex<HashMap<String, u32>> {
     R.get_or_init(Default::default)
 }
 
-fn next_id(version: &str) -> String {
+/// Launch ids the user asked us to kill (so the exit is not reported as a crash).
+fn killed() -> &'static Mutex<HashSet<String>> {
+    static R: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    R.get_or_init(Default::default)
+}
+
+pub fn next_id(version: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(1);
     let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
     format!("{version}-{ts}-{}", N.fetch_add(1, Ordering::Relaxed))
 }
 
-/// Spawn the game; streams stdout/stderr as `launch://log`, exit as `launch://exit`.
-pub fn spawn(app: AppHandle, req: &LaunchRequest, log_dir: Option<PathBuf>) -> Result<String, LaunchError> {
-    let (cmd, _) = prepare(req)?;
-    let id = next_id(&req.version_id);
+/// What the exit hook gets to know about a finished game process.
+pub struct ExitInfo {
+    pub code: Option<i32>,
+    /// The user asked the launcher to kill this process.
+    pub killed: bool,
+    pub duration: Duration,
+    /// Last lines of output (stdout and stderr interleaved), already token-masked.
+    pub tail: Vec<String>,
+}
+
+impl ExitInfo {
+    /// Non-zero exit that was not caused by the user.
+    pub fn crashed(&self) -> bool {
+        !self.killed && self.code != Some(0)
+    }
+}
+
+/// Optional callbacks for [`spawn_cmd`].
+#[derive(Default)]
+pub struct SpawnHooks {
+    /// Use this id instead of generating one.
+    pub launch_id: Option<String>,
+    /// Called for every output line as `(stream, line)`, from the reader threads.
+    pub on_line: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
+    /// Called once after the process ended; the returned object's fields are merged into `launch://exit`.
+    pub on_exit: Option<Box<dyn FnOnce(&ExitInfo) -> serde_json::Value + Send>>,
+}
+
+const TAIL_LINES: usize = 400;
+
+fn line_level(stream: &str, line: &str) -> &'static str {
+    if line.contains("/ERROR]") || line.contains("/FATAL]") {
+        "error"
+    } else if line.contains("/WARN]") {
+        "warn"
+    } else if line.contains("/DEBUG]") || line.contains("/TRACE]") {
+        "debug"
+    } else if stream == "stderr" {
+        "warn"
+    } else {
+        "info"
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+fn log_event(id: &str, stream: &str, line: &str) -> serde_json::Value {
+    serde_json::json!({ "id": id, "launchId": id, "stream": stream, "line": line, "level": line_level(stream, line), "ts": now_ms() })
+}
+
+/// Spawn an already prepared command; streams stdout/stderr as `launch://log`, exit as `launch://exit`.
+pub fn spawn_cmd(
+    emit: Emit,
+    req: &LaunchRequest,
+    cmd: args::BuiltCommand,
+    log_dir: Option<PathBuf>,
+    hooks: SpawnHooks,
+) -> Result<String, LaunchError> {
+    // Offline sessions carry a placeholder token (the player UUID); real tokens must never be logged.
+    if req.auth.user_type != "legacy" {
+        crate::app::logging::register_secret(&req.auth.access_token);
+    }
+    let id = hooks.launch_id.clone().unwrap_or_else(|| next_id(&req.version_id));
+    let started = Instant::now();
     let mut child = Command::new(&cmd.java)
         .args(&cmd.args)
         .current_dir(&cmd.working_dir)
@@ -245,9 +311,10 @@ pub fn spawn(app: AppHandle, req: &LaunchRequest, log_dir: Option<PathBuf>) -> R
         std::fs::create_dir_all(&d).ok()?;
         std::fs::File::create(d.join(format!("{id}.log"))).ok()
     });
-    let log_file = std::sync::Arc::new(Mutex::new(log_file));
+    let log_file = Arc::new(Mutex::new(log_file));
+    let tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
     let header = cmd.display(&req.auth);
-    let _ = app.emit("launch://log", LogEvent { id: &id, stream: "launcher", line: &header });
+    emit("launch://log", log_event(&id, "launcher", &crate::app::logging::mask(&header)));
 
     let mut readers = Vec::new();
     for (stream, pipe) in [
@@ -255,21 +322,33 @@ pub fn spawn(app: AppHandle, req: &LaunchRequest, log_dir: Option<PathBuf>) -> R
         ("stderr", child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>)),
     ] {
         let Some(pipe) = pipe else { continue };
-        let (app, id, lf) = (app.clone(), id.clone(), log_file.clone());
+        let (emit, id, lf, tail, on_line) = (emit.clone(), id.clone(), log_file.clone(), tail.clone(), hooks.on_line.clone());
         readers.push(std::thread::spawn(move || {
             let mut r = BufReader::new(pipe);
             let mut buf = Vec::new();
             while r.read_until(b'\n', &mut buf).map(|n| n > 0).unwrap_or(false) {
-                let line = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_string();
+                let raw = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_string();
                 buf.clear();
+                let line = crate::app::logging::mask(&raw);
                 if let Some(f) = lf.lock().unwrap().as_mut() {
                     let _ = writeln!(f, "{line}");
                 }
-                let _ = app.emit("launch://log", LogEvent { id: &id, stream, line: &line });
+                {
+                    let mut t = tail.lock().unwrap();
+                    if t.len() >= TAIL_LINES {
+                        t.pop_front();
+                    }
+                    t.push_back(line.clone());
+                }
+                if let Some(cb) = &on_line {
+                    cb(stream, &line);
+                }
+                emit("launch://log", log_event(&id, stream, &line));
             }
         }));
     }
     let wait_id = id.clone();
+    let on_exit = hooks.on_exit;
     std::thread::spawn(move || {
         let status = child.wait();
         for r in readers {
@@ -277,9 +356,32 @@ pub fn spawn(app: AppHandle, req: &LaunchRequest, log_dir: Option<PathBuf>) -> R
         }
         running().lock().unwrap().remove(&wait_id);
         let code = status.ok().and_then(|s| s.code());
-        let _ = app.emit("launch://exit", ExitEvent { id: &wait_id, code });
+        let was_killed = killed().lock().unwrap().remove(&wait_id);
+        let info = ExitInfo {
+            code,
+            killed: was_killed,
+            duration: started.elapsed(),
+            tail: tail.lock().unwrap().iter().cloned().collect(),
+        };
+        let mut payload = serde_json::json!({
+            "id": wait_id, "launchId": wait_id, "code": code,
+            "crashed": info.crashed(), "crash": serde_json::Value::Null,
+            "durationMs": info.duration.as_millis() as u64,
+        });
+        if let Some(h) = on_exit {
+            if let (Some(base), serde_json::Value::Object(extra)) = (payload.as_object_mut(), h(&info)) {
+                base.extend(extra);
+            }
+        }
+        emit("launch://exit", payload);
     });
     Ok(id)
+}
+
+/// Spawn the game; streams stdout/stderr as `launch://log`, exit as `launch://exit`.
+pub fn spawn(app: AppHandle, req: &LaunchRequest, log_dir: Option<PathBuf>) -> Result<String, LaunchError> {
+    let (cmd, _) = prepare(req)?;
+    spawn_cmd(tauri_emit(&app), req, cmd, log_dir, SpawnHooks::default())
 }
 
 #[tauri::command]
@@ -302,7 +404,12 @@ pub fn launch_start(app: AppHandle, request: LaunchRequest, log_dir: Option<Stri
 
 #[tauri::command]
 pub fn launch_kill(id: String) -> Result<(), LaunchError> {
-    let pid = running().lock().unwrap().get(&id).copied().ok_or(LaunchError::NotRunning(id))?;
+    kill_by_id(&id)
+}
+
+pub fn kill_by_id(id: &str) -> Result<(), LaunchError> {
+    let pid = running().lock().unwrap().get(id).copied().ok_or_else(|| LaunchError::NotRunning(id.to_string()))?;
+    killed().lock().unwrap().insert(id.to_string());
     #[cfg(unix)]
     {
         let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status();

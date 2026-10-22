@@ -46,12 +46,26 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Bundle identifier (must match `tauri.conf.json`); names the app data directory.
+pub const APP_IDENTIFIER: &str = "com.snowingfox.pcltauriport";
+
 /// App data directory. `PCL_DATA_DIR` overrides (used by tests and portable setups).
-/// macOS: `~/Library/Application Support/PCL-Tauri`.
+/// macOS: `~/Library/Application Support/<identifier>`.
 pub fn data_dir() -> PathBuf {
     if let Some(p) = std::env::var_os("PCL_DATA_DIR") {
         return PathBuf::from(p);
     }
+    if cfg!(target_os = "macos") {
+        home_dir().join("Library/Application Support").join(APP_IDENTIFIER)
+    } else if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
+        PathBuf::from(x).join(APP_IDENTIFIER)
+    } else {
+        home_dir().join(".local/share").join(APP_IDENTIFIER)
+    }
+}
+
+/// Data directory used before the identifier-based layout (migrated by `app::paths`).
+pub fn legacy_data_dir() -> PathBuf {
     if cfg!(target_os = "macos") {
         home_dir().join("Library/Application Support/PCL-Tauri")
     } else if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
@@ -150,6 +164,7 @@ pub fn migrate(mut doc: Value) -> Value {
 pub struct SettingsStore {
     path: PathBuf,
     inner: Mutex<GlobalSettings>,
+    listeners: Mutex<Vec<Box<dyn Fn(&GlobalSettings) + Send + Sync>>>,
 }
 
 impl SettingsStore {
@@ -173,7 +188,7 @@ impl SettingsStore {
             Err(_) => GlobalSettings::default(),
         };
         settings.sanitize();
-        Self { path, inner: Mutex::new(settings) }
+        Self { path, inner: Mutex::new(settings), listeners: Mutex::new(Vec::new()) }
     }
 
     pub fn path(&self) -> &Path {
@@ -189,7 +204,16 @@ impl SettingsStore {
         new.sanitize();
         atomic_write_json(&self.path, &new)?;
         *self.inner.lock().unwrap() = new.clone();
+        for l in self.listeners.lock().unwrap().iter() {
+            l(&new);
+        }
         Ok(new)
+    }
+
+    /// Register a callback invoked (synchronously) after every successful `set`/`update`/`patch`/`reset`.
+    /// Callbacks must not call back into `on_change`.
+    pub fn on_change(&self, f: impl Fn(&GlobalSettings) + Send + Sync + 'static) {
+        self.listeners.lock().unwrap().push(Box::new(f));
     }
 
     /// Mutate in place, sanitize, persist. Memory state is unchanged if the write fails.

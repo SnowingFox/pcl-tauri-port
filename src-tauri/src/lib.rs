@@ -1,4 +1,5 @@
 mod accounts;
+mod app;
 mod java;
 mod launch;
 mod crash;
@@ -9,23 +10,25 @@ mod install;
 mod modpack;
 mod resources;
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            use tauri::Manager;
-            app.manage(download::new_manager(app.handle().clone()));
-            Ok(())
+            app::setup(app.handle())
         })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
+            app::commands::app_launch,
+            app::commands::app_launch_kill,
+            app::commands::app_install_game,
+            app::commands::app_install_resource,
+            app::commands::app_install_modpack,
+            app::commands::app_modpack_report,
+            app::commands::app_instance_mods,
+            app::commands::app_instance_saves,
+            app::commands::app_open_url,
+            app::commands::app_reveal,
+            app::commands::app_data_dirs,
             accounts::commands::accounts_list,
             accounts::commands::accounts_get_selected,
             accounts::commands::accounts_select,

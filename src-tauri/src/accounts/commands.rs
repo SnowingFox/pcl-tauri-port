@@ -3,19 +3,23 @@ use super::manager::AccountManager;
 use super::secrets::KeychainStore;
 use super::{yggdrasil, AccountError, AccountInfo, AuthSession};
 use std::sync::{Arc, OnceLock};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 static MANAGER: OnceLock<AccountManager> = OnceLock::new();
 
 pub const EVENT_DEVICE_CODE: &str = "accounts://device-code";
 
-fn mgr(app: &AppHandle) -> Result<&'static AccountManager, AccountError> {
+/// The process-wide account manager (state lives in the app data dir shared with settings).
+pub fn manager() -> Result<&'static AccountManager, AccountError> {
     if let Some(m) = MANAGER.get() {
         return Ok(m);
     }
-    let dir = app.path().app_data_dir().map_err(|e| AccountError::Io(e.to_string()))?;
-    let m = AccountManager::new(dir, Arc::new(KeychainStore))?;
+    let m = AccountManager::new(crate::settings::store::data_dir(), Arc::new(KeychainStore))?;
     Ok(MANAGER.get_or_init(|| m))
+}
+
+fn mgr(_app: &AppHandle) -> Result<&'static AccountManager, AccountError> {
+    manager()
 }
 
 type R<T> = Result<T, AccountError>;

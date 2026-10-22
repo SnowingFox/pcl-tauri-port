@@ -157,6 +157,8 @@ pub struct Tracker {
     pub total_files: AtomicU64,
     /// (weight_start, weight_span) mapping stage fraction into task fraction.
     pub weight: Mutex<(f64, f64)>,
+    /// (offset, factor) applied on top of the stage weight, for tasks made of several phases.
+    pub scale: Mutex<(f64, f64)>,
     last: Mutex<(Instant, u64, u64)>,
     sink: Sink,
     ctl: TaskCtl,
@@ -172,10 +174,16 @@ impl Tracker {
             done_files: 0.into(),
             total_files: 0.into(),
             weight: Mutex::new((0.0, 1.0)),
+            scale: Mutex::new((0.0, 1.0)),
             last: Mutex::new((Instant::now(), 0, 0)),
             sink,
             ctl,
         })
+    }
+
+    /// Map the stage fractions of the following stages into `offset..offset+factor`.
+    pub fn set_scale(&self, offset: f64, factor: f64) {
+        *self.scale.lock().unwrap() = (offset, factor);
     }
 
     pub fn begin_stage(&self, name: &str, start: f64, span: f64, files: u64, bytes: u64) {
@@ -214,6 +222,7 @@ impl Tracker {
             0.0
         };
         let (s, w) = *self.weight.lock().unwrap();
+        let (off, fac) = *self.scale.lock().unwrap();
         ProgressEvent {
             task_id: self.task_id.clone(),
             stage: self.stage.lock().unwrap().clone(),
@@ -222,7 +231,7 @@ impl Tracker {
             done_files: df,
             total_files: tf,
             speed_bps: speed,
-            fraction: s + w * local,
+            fraction: off + fac * (s + w * local),
             state: self.ctl.state(),
         }
     }

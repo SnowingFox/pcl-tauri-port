@@ -49,7 +49,15 @@ pub async fn install_vanilla(ctx: &TaskCtx, mgr: &Arc<Manager>, mc: &str, start:
     ctx.file(FileSpec::new(&entry.url, &jpath).with_sha1(entry.sha1.clone())).await?;
     let raw: Value = serde_json::from_slice(&tokio::fs::read(&jpath).await?)?;
     let vj: VersionJson = serde_json::from_value(raw.clone())?;
-    let mut at = start + span * 0.02;
+    install_version_files(ctx, mc, raw, &vj, start + span * 0.02, span * 0.98).await
+}
+
+/// Steps 2-6 of the vanilla install for an already present version json (client jar, libraries,
+/// assets, log config). Lets callers repair an install without consulting the version manifest.
+pub async fn install_version_files(ctx: &TaskCtx, mc: &str, raw: Value, vj: &VersionJson, start: f64, span: f64) -> DlResult<Value> {
+    let gd = ctx.cfg.game_dir.clone();
+    let span = span / 0.98; // the step weights below are fractions of the whole install
+    let mut at = start;
 
     // 2. client jar
     if let Some(c) = vj.downloads.as_ref().and_then(|d| d.get("client")) {
@@ -59,7 +67,7 @@ pub async fn install_vanilla(ctx: &TaskCtx, mgr: &Arc<Manager>, mc: &str, start:
     at += span * 0.13;
 
     // 3. libraries
-    install_libraries(ctx, &vj, at, span * 0.25, "libraries").await?;
+    install_libraries(ctx, vj, at, span * 0.25, "libraries").await?;
     at += span * 0.25;
 
     // 4. asset index
@@ -118,7 +126,7 @@ pub async fn install_vanilla(ctx: &TaskCtx, mgr: &Arc<Manager>, mc: &str, start:
             ctx.file(FileSpec::new(url, gd.join("assets/log_configs").join(id)).with_sha1(f["sha1"].as_str().map(String::from))).await?;
         }
     }
-    ctx.tracker.begin_stage("done", start + span, 0.0, 0, 0);
+    ctx.tracker.begin_stage("done", start + span * 0.98, 0.0, 0, 0);
     Ok(raw)
 }
 

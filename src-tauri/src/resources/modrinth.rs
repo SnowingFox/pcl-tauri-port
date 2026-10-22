@@ -133,6 +133,12 @@ pub async fn search(kind: ResourceKind, q: &SearchQuery) -> Result<SearchResult>
     Ok(parse_search(&send_json(http_client()?.get(url)).await?))
 }
 
+/// GET /version/{id}
+pub async fn version_by_id(id: &str) -> Result<ResourceFile> {
+    let v = send_json(http_client()?.get(format!("{BASE}/version/{}", urlencode(id)))).await?;
+    Ok(parse_version(&v))
+}
+
 pub async fn project(id_or_slug: &str) -> Result<ProjectSummary> {
     let v = send_json(http_client()?.get(format!("{BASE}/project/{}", urlencode(id_or_slug)))).await?;
     Ok(parse_project(&v))

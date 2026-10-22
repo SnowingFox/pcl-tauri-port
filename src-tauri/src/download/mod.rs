@@ -135,6 +135,15 @@ struct Entry {
 
 pub type FinishHook = Arc<dyn Fn(&TaskInfo) + Send + Sync>;
 
+/// Per-task options for [`Manager::spawn_with`].
+#[derive(Default)]
+pub struct SpawnOpts {
+    /// Config snapshot for this task instead of the manager's current one (e.g. another game dir).
+    pub cfg: Option<DownloadConfig>,
+    /// Extra progress listener, called in addition to the global `download://progress` sink.
+    pub on_progress: Option<Sink>,
+}
+
 /// Registry of running/finished tasks. Event delivery is injected so tests need no Tauri runtime.
 pub struct Manager {
     pub config: Mutex<DownloadConfig>,
@@ -144,6 +153,7 @@ pub struct Manager {
     sink: Sink,
     on_finish: FinishHook,
     manifest_cache: tokio::sync::Mutex<Option<(std::time::Instant, Arc<manifest::VersionManifest>)>>,
+    manifest_url: Mutex<String>,
 }
 
 impl Manager {
@@ -161,7 +171,16 @@ impl Manager {
             sink,
             on_finish,
             manifest_cache: tokio::sync::Mutex::new(None),
+            manifest_url: Mutex::new(manifest::MANIFEST_URL.to_string()),
         })
+    }
+
+    /// Point the version manifest lookup somewhere else (test servers). Clears the cache.
+    pub fn set_manifest_url(&self, url: &str) {
+        *self.manifest_url.lock().unwrap() = url.to_string();
+        if let Ok(mut c) = self.manifest_cache.try_lock() {
+            *c = None;
+        }
     }
 
     pub fn cfg(&self) -> DownloadConfig {
@@ -174,9 +193,28 @@ impl Manager {
         F: FnOnce(TaskCtx) -> Fut + Send + 'static,
         Fut: Future<Output = DlResult<()>> + Send + 'static,
     {
+        self.spawn_with(SpawnOpts::default(), kind, label, f)
+    }
+
+    /// Like [`Manager::spawn`] but with per-task options (config snapshot override, progress tap).
+    pub fn spawn_with<F, Fut>(self: &Arc<Self>, opts: SpawnOpts, kind: &str, label: &str, f: F) -> String
+    where
+        F: FnOnce(TaskCtx) -> Fut + Send + 'static,
+        Fut: Future<Output = DlResult<()>> + Send + 'static,
+    {
         let id = format!("task-{}", self.next.fetch_add(1, Ordering::Relaxed));
         let ctl = TaskCtl::new();
-        let tracker = Tracker::new(&id, self.sink.clone(), ctl.clone());
+        let sink: Sink = match opts.on_progress {
+            Some(tap) => {
+                let global = self.sink.clone();
+                Arc::new(move |p: &ProgressEvent| {
+                    global(p);
+                    tap(p);
+                })
+            }
+            None => self.sink.clone(),
+        };
+        let tracker = Tracker::new(&id, sink, ctl.clone());
         let entry = Arc::new(Entry {
             info: Mutex::new(TaskInfo {
                 task_id: id.clone(),
@@ -189,9 +227,9 @@ impl Manager {
             ctl: ctl.clone(),
         });
         self.tasks.lock().unwrap().insert(id.clone(), entry.clone());
-        let ctx = TaskCtx { client: self.client.clone(), cfg: self.cfg(), ctl, tracker: tracker.clone() };
+        let ctx = TaskCtx { client: self.client.clone(), cfg: opts.cfg.unwrap_or_else(|| self.cfg()), ctl, tracker: tracker.clone() };
         let this = self.clone();
-        tokio::spawn(async move {
+        let fut = async move {
             let res = f(ctx).await;
             let mut info = entry.info.lock().unwrap();
             info.last_progress = Some(tracker.snapshot(0));
@@ -206,7 +244,16 @@ impl Manager {
             let snap = info.clone();
             drop(info);
             (this.on_finish)(&snap);
-        });
+        };
+        // Sync Tauri commands run on the main thread, which has no Tokio context.
+        match tokio::runtime::Handle::try_current() {
+            Ok(h) => {
+                h.spawn(fut);
+            }
+            Err(_) => {
+                tauri::async_runtime::spawn(fut);
+            }
+        }
         id
     }
 
@@ -259,7 +306,8 @@ impl Manager {
         }
         let cfg = self.cfg();
         let cache_file = cfg.game_dir.join("launcher_version_manifest_cache.json");
-        let parsed = match fetch_bytes(&self.client, cfg.source, manifest::MANIFEST_URL).await {
+        let url = self.manifest_url.lock().unwrap().clone();
+        let parsed = match fetch_bytes(&self.client, cfg.source, &url).await {
             Ok(b) => {
                 let m = manifest::VersionManifest::parse(&b)?;
                 let _ = tokio::fs::create_dir_all(&cfg.game_dir).await;
@@ -300,7 +348,8 @@ pub fn download_get_config(m: Mgr<'_>) -> DownloadConfig {
 
 #[tauri::command]
 pub fn download_set_config(m: Mgr<'_>, config: DownloadConfig) {
-    *m.config.lock().unwrap() = config;
+    *m.config.lock().unwrap() = config.clone();
+    crate::app::config::persist_download_config(&config);
 }
 
 #[tauri::command]

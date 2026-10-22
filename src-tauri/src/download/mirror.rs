@@ -8,6 +8,9 @@ pub enum Source {
     #[default]
     Official,
     Bmcl,
+    /// Official URL first, the BMCLAPI mirror only as fallback.
+    #[serde(rename = "officialfirst")]
+    OfficialFirst,
 }
 
 const BMCL: &str = "https://bmclapi2.bangbang93.com";
@@ -42,6 +45,7 @@ pub fn to_mirror(url: &str) -> Option<String> {
 pub fn candidates(url: &str, source: Source) -> Vec<String> {
     match (source, to_mirror(url)) {
         (Source::Bmcl, Some(m)) => vec![m, url.to_string()],
+        (Source::OfficialFirst, Some(m)) => vec![url.to_string(), m],
         _ => vec![url.to_string()],
     }
 }
@@ -89,5 +93,8 @@ mod tests {
         assert!(c[0].starts_with("https://bmclapi2"));
         assert_eq!(c[1], u);
         assert_eq!(candidates("https://x.org/a", Source::Bmcl).len(), 1);
+        let o = candidates(u, Source::OfficialFirst);
+        assert_eq!(o[0], u);
+        assert!(o[1].starts_with("https://bmclapi2"));
     }
 }

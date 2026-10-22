@@ -12,6 +12,13 @@ fn finish(c: super::collect::Collected, manual: bool) -> CrashAnalysis {
     r
 }
 
+/// Analyze the logs found under `game_dir` / `root`. Only files written within the last three
+/// minutes count (PCL's rule), plus the captured `live_output`.
+pub fn analyze_game(game_dir: &Path, root: &Path, live_output: Option<&[String]>) -> CrashAnalysis {
+    let paths = candidate_paths(game_dir, root);
+    finish(collect(&paths, true, live_output), false)
+}
+
 /// Analyze the logs of an instance after a crash. `live_output` is the tail of
 /// the game's stdout/stderr captured by the launcher.
 #[tauri::command]
@@ -22,8 +29,7 @@ pub fn crash_analyze_instance(root: String, name: String, live_output: Option<Ve
     }
     crate::instances::detect::validate_name(&name)?;
     let info = load_instance(Path::new(&root), &name, g.game.isolation);
-    let paths = candidate_paths(Path::new(&info.game_dir), Path::new(&root));
-    Ok(finish(collect(&paths, true, live_output.as_deref()), false))
+    Ok(analyze_game(Path::new(&info.game_dir), Path::new(&root), live_output.as_deref()))
 }
 
 /// Analyze a log file the user picked (`.log`, `.txt`, hs_err, crash report).

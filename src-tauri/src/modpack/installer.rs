@@ -20,7 +20,8 @@ pub async fn install(
         return Err(format!("file has no download URL (resolve the plan first): {}", unresolved.path));
     }
     engine.install_game(instance_dir, &plan.mc_version, &plan.loaders).await?;
-    extract_overrides(archive, plan, instance_dir)?;
+    let (a, p, d) = (archive.to_path_buf(), plan.clone(), instance_dir.to_path_buf());
+    tokio::task::spawn_blocking(move || extract_overrides(&a, &p, &d)).await.map_err(|e| e.to_string())??;
     engine.download_files(instance_dir, &files).await
 }
 

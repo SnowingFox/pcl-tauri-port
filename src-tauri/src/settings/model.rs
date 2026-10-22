@@ -172,6 +172,10 @@ pub struct DownloadSettings {
     pub version_source: DownloadSource,
     pub mod_source: DownloadSource,
     pub thread_count: u32,
+    /// Parallel ranges per large file.
+    pub segments: u32,
+    /// Attempts per URL.
+    pub retries: u32,
     /// Bytes/sec cap, 0 = unlimited.
     pub speed_limit_bps: u64,
     pub validate_ssl: bool,
@@ -185,6 +189,8 @@ impl Default for DownloadSettings {
             version_source: DownloadSource::MirrorFirst,
             mod_source: DownloadSource::OfficialFirst,
             thread_count: 64,
+            segments: 4,
+            retries: 3,
             speed_limit_bps: 0,
             validate_ssl: true,
             translate_mod_names: true,
@@ -294,6 +300,8 @@ impl GlobalSettings {
     pub fn sanitize(&mut self) {
         self.memory.custom_mb = self.memory.custom_mb.clamp(512, 1 << 20);
         self.download.thread_count = self.download.thread_count.clamp(1, 256);
+        self.download.segments = self.download.segments.clamp(1, 16);
+        self.download.retries = self.download.retries.clamp(1, 10);
         self.ui.opacity = self.ui.opacity.min(1000);
         self.ui.hue = self.ui.hue.min(360);
         self.ui.saturation = self.ui.saturation.min(100);
