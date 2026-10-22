@@ -23,6 +23,7 @@ pub fn run() {
             app.manage(download::new_manager(app.handle().clone()));
             Ok(())
         })
+        .plugin(settings::guard::navigation_guard())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet,

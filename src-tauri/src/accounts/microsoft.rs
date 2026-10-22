@@ -67,10 +67,16 @@ fn default_interval() -> u64 {
     5
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct MsTokens {
     pub access_token: String,
     pub refresh_token: String,
+}
+
+impl std::fmt::Debug for MsTokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MsTokens").field("access_token", &"<redacted>").field("refresh_token", &"<redacted>").finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,11 +85,17 @@ pub struct McProfile {
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct McLogin {
     pub access_token: String,
     pub expires_in: u64,
     pub profile: McProfile,
+}
+
+impl std::fmt::Debug for McLogin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McLogin").field("access_token", &"<redacted>").field("expires_in", &self.expires_in).field("profile", &self.profile).finish()
+    }
 }
 
 pub fn http() -> reqwest::Client {

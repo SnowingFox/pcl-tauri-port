@@ -4,6 +4,7 @@ use super::detect::InstanceInfo;
 use super::ops::{self, ExportedInfo};
 use super::scan;
 use crate::settings::commands::global;
+use crate::settings::guard;
 use crate::settings::{IsolationMode, McFolderEntry};
 use std::path::{Path, PathBuf};
 
@@ -30,10 +31,11 @@ pub fn mc_folders_list() -> Vec<McFolderEntry> {
 
 #[tauri::command]
 pub fn mc_folder_add(name: String, path: String) -> Result<Vec<McFolderEntry>, String> {
+    // The registered folders are the trust anchor for all file access, so refuse `/`, the
+    // home directory, system folders and the launcher's own data directory before creating
+    // anything on disk. The path is stored as given (after validation) to keep `known_root` exact.
+    guard::validate_new_root(Path::new(&path))?;
     let p = Path::new(&path);
-    if !p.is_absolute() {
-        return Err("需要绝对路径".into());
-    }
     std::fs::create_dir_all(p.join("versions")).map_err(|e| format!("无法访问该文件夹：{e}"))?;
     let name = if name.trim().is_empty() {
         p.file_name().and_then(|n| n.to_str()).unwrap_or("Minecraft").to_string()
@@ -89,6 +91,7 @@ pub fn instance_get(root: String, name: String) -> Result<InstanceInfo, String> 
 #[tauri::command]
 pub fn instance_select(root: String, name: String) -> Result<(), String> {
     known_root(&root)?;
+    super::detect::validate_name(&name)?;
     global()
         .update(|g| {
             g.game.selected_folder = Some(root);
@@ -133,8 +136,8 @@ pub fn instance_delete(root: String, name: String, permanent: bool) -> Result<St
 #[tauri::command]
 pub fn instance_open_in_finder(root: String, name: String, target: String) -> Result<(), String> {
     let root = known_root(&root)?;
-    let info = scan::load_instance(&root, &name, iso());
     super::detect::validate_name(&name)?;
+    let info = scan::load_instance(&root, &name, iso());
     let game = PathBuf::from(&info.game_dir);
     let (path, select) = match target.as_str() {
         "instance" => (PathBuf::from(&info.path), true),

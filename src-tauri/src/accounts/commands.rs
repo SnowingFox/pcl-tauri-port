@@ -1,7 +1,7 @@
 //! Tauri command surface. See docs/api/accounts.md.
 use super::manager::AccountManager;
 use super::secrets::KeychainStore;
-use super::{yggdrasil, AccountError, AccountInfo, AuthSession};
+use super::{yggdrasil, AccountError, AccountInfo, SessionSummary};
 use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -94,10 +94,13 @@ pub async fn accounts_add_yggdrasil(app: AppHandle, server: String, identifier: 
     mgr(&app)?.add_yggdrasil(&server, &identifier, &password).await
 }
 
-/// Launch credentials (refreshes tokens). Rust callers may use `AccountManager::session` directly.
+/// Refreshes the account's tokens and returns a token-free summary. The access and client
+/// tokens never cross the IPC boundary: the launch pipeline calls `AccountManager::session`
+/// in Rust.
 #[tauri::command]
-pub async fn accounts_get_session(app: AppHandle, id: String) -> R<AuthSession> {
-    mgr(&app)?.session(&id).await
+pub async fn accounts_get_session(app: AppHandle, id: String) -> R<SessionSummary> {
+    let s = mgr(&app)?.session(&id).await?;
+    Ok(SessionSummary::from(&s))
 }
 
 /// Skin PNG as a `data:` URL, or null.

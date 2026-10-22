@@ -11,17 +11,26 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[tauri::command]
-pub fn install_vanilla(m: Mgr<'_>, mc_version: String) -> String {
+pub fn install_vanilla(m: Mgr<'_>, mc_version: String) -> Result<String, DlError> {
+    crate::settings::guard::check_mc_version(&mc_version).map_err(DlError::Other)?;
     let mgr: Arc<Manager> = m.inner().clone();
     let mc = mc_version.clone();
-    m.spawn("vanilla", &format!("Minecraft {mc_version}"), move |ctx| {
+    Ok(m.spawn("vanilla", &format!("Minecraft {mc_version}"), move |ctx| {
         let mgr = mgr.clone();
         async move { vanilla::install_vanilla(&ctx, &mgr, &mc, 0.0, 1.0).await.map(|_| ()) }
-    })
+    }))
 }
 
 #[tauri::command]
 pub fn install_loader(m: Mgr<'_>, loader: String, mc_version: String, loader_version: String, java_path: Option<String>) -> Result<String, DlError> {
+    use crate::settings::guard::{check_mc_version, check_version_token};
+    check_mc_version(&mc_version).map_err(DlError::Other)?;
+    check_version_token("加载器版本", &loader_version).map_err(DlError::Other)?;
+    // The forge/neoforge installer runs `java` with processors from the downloaded jar: the
+    // executable must be a real Java, never an arbitrary program picked by the UI.
+    if let Some(j) = java_path.as_deref().filter(|j| !j.is_empty()) {
+        crate::java::check_java_exe(j).map_err(DlError::Other)?;
+    }
     let mgr: Arc<Manager> = m.inner().clone();
     let label = format!("{loader} {loader_version} for {mc_version}");
     let kind = loader.clone();
@@ -45,21 +54,31 @@ pub fn install_loader(m: Mgr<'_>, loader: String, mc_version: String, loader_ver
 
 #[tauri::command]
 pub async fn install_list_loader_versions(m: Mgr<'_>, loader: String, mc_version: String) -> Result<Vec<loaders::LoaderVersion>, DlError> {
+    crate::settings::guard::check_mc_version(&mc_version).map_err(DlError::Other)?;
     loaders::list_loader_versions(&m, &loader, &mc_version).await
 }
 
 #[tauri::command]
 pub async fn install_list_optifine(m: Mgr<'_>, mc_version: String) -> Result<Vec<loaders::OptifineVersion>, DlError> {
+    crate::settings::guard::check_mc_version(&mc_version).map_err(DlError::Other)?;
     loaders::list_optifine(&m, &mc_version).await
 }
 
 /// Download an OptiFine jar into `mods_dir` (for use with Forge). Standalone OptiFine install is not implemented.
 #[tauri::command]
-pub fn install_optifine_mod(m: Mgr<'_>, mc_version: String, kind: String, patch: String, mods_dir: PathBuf) -> String {
+pub fn install_optifine_mod(m: Mgr<'_>, mc_version: String, kind: String, patch: String, mods_dir: PathBuf) -> Result<String, DlError> {
+    use crate::settings::guard;
+    guard::check_mc_version(&mc_version).map_err(DlError::Other)?;
+    guard::check_version_token("OptiFine 类型", &kind).map_err(DlError::Other)?;
+    guard::check_version_token("OptiFine 补丁", &patch).map_err(DlError::Other)?;
+    let (mods_dir, depth) = guard::confine_content(&guard::registered_roots(), &mods_dir).map_err(DlError::Other)?;
+    if depth != 0 || mods_dir.file_name().map(|n| n != "mods").unwrap_or(true) {
+        return Err(DlError::Other(format!("OptiFine 只能安装到 mods 文件夹：{}", mods_dir.display())));
+    }
     let label = format!("OptiFine {mc_version} {kind} {patch}");
-    m.spawn("optifine", &label, move |ctx| async move {
+    Ok(m.spawn("optifine", &label, move |ctx| async move {
         loaders::install_optifine_mod(&ctx, &mc_version, &kind, &patch, mods_dir).await.map(|_| ())
-    })
+    }))
 }
 
 /// Which installed version ids exist under the configured game dir.

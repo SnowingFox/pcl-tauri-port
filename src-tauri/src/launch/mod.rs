@@ -40,13 +40,19 @@ impl Serialize for LaunchError {
 }
 
 /// Supplied by the account module.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthData {
     pub name: String,
     pub uuid: String,
     pub access_token: String,
     /// "msa", "legacy" or "mojang". Offline accounts typically use "msa" with a dummy token.
     pub user_type: String,
+}
+
+impl std::fmt::Debug for AuthData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthData").field("name", &self.name).field("uuid", &self.uuid).field("access_token", &"<redacted>").field("user_type", &self.user_type).finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,13 +289,47 @@ pub fn spawn(app: AppHandle, req: &LaunchRequest, log_dir: Option<PathBuf>) -> R
 }
 
 #[tauri::command]
-pub fn launch_precheck(request: LaunchRequest) -> PrecheckReport {
-    precheck(&request).0
+pub fn launch_precheck(request: LaunchRequest) -> Result<PrecheckReport, LaunchError> {
+    check_request(&request, &crate::settings::guard::registered_roots())?;
+    Ok(precheck(&request).0)
+}
+
+fn reject(msg: impl Into<String>) -> LaunchError {
+    LaunchError::Spawn(format!("rejected: {}", msg.into()))
+}
+
+/// Validation for requests that come from the webview (the Tauri commands below). The
+/// internal `precheck` / `prepare` / `spawn` functions stay permissive so the app layer can
+/// add launcher-controlled arguments such as the authlib-injector `-javaagent`.
+///
+/// - `minecraft_dir` must be a registered Minecraft folder, `version_id` one path component
+/// - `java_path` must be a real `java` binary, `game_dir` inside a registered folder
+/// - extra JVM arguments must not load agents, patch modules or run commands
+pub(crate) fn check_request(req: &LaunchRequest, roots: &[PathBuf]) -> Result<(), LaunchError> {
+    use crate::settings::guard;
+    let mc = guard::resolve(Path::new(&req.minecraft_dir)).map_err(reject)?;
+    if !roots.iter().any(|r| guard::resolve(r).map(|r| r == mc).unwrap_or(false)) {
+        return Err(reject(format!("unregistered Minecraft folder {}", req.minecraft_dir)));
+    }
+    if !guard::is_safe_component(&req.version_id) {
+        return Err(reject(format!("bad version id {:?}", req.version_id)));
+    }
+    if let Some(j) = req.java_path.as_deref().filter(|j| !j.is_empty()) {
+        java::check_java_exe(j).map_err(reject)?;
+    }
+    if let Some(g) = req.game_dir.as_deref().filter(|g| !g.is_empty()) {
+        guard::confine(roots, Path::new(g)).map_err(reject)?;
+    }
+    if let Some(a) = req.extra_jvm_args.iter().find(|a| guard::jvm_arg_is_dangerous(a)) {
+        return Err(reject(format!("JVM argument not allowed: {a}")));
+    }
+    Ok(())
 }
 
 /// Returns the (token-masked) command line without launching.
 #[tauri::command]
 pub fn launch_build_command(request: LaunchRequest) -> Result<String, LaunchError> {
+    check_request(&request, &crate::settings::guard::registered_roots())?;
     let (cmd, _) = prepare(&request)?;
     Ok(cmd.display(&request.auth))
 }
@@ -297,7 +337,16 @@ pub fn launch_build_command(request: LaunchRequest) -> Result<String, LaunchErro
 /// Returns an instance id used by `launch://log` / `launch://exit` events.
 #[tauri::command]
 pub fn launch_start(app: AppHandle, request: LaunchRequest, log_dir: Option<String>) -> Result<String, LaunchError> {
-    spawn(app, &request, log_dir.map(PathBuf::from))
+    use crate::settings::guard;
+    let mut roots = guard::registered_roots();
+    check_request(&request, &roots)?;
+    // Game logs may only be written below a registered folder or the launcher's data directory.
+    roots.push(crate::settings::store::data_dir());
+    let log_dir = match log_dir.filter(|d| !d.is_empty()) {
+        Some(d) => Some(guard::confine(&roots, Path::new(&d)).map_err(reject)?),
+        None => None,
+    };
+    spawn(app, &request, log_dir)
 }
 
 #[tauri::command]
@@ -322,6 +371,9 @@ pub fn launch_list_running() -> Vec<String> {
 /// Missing asset objects for a version (for the download module).
 #[tauri::command]
 pub fn launch_missing_assets(minecraft_dir: String, version_id: String) -> Result<Vec<assets::MissingAsset>, LaunchError> {
+    let roots = crate::settings::guard::registered_roots();
+    let probe = LaunchRequest { minecraft_dir: minecraft_dir.clone(), version_id: version_id.clone(), ..empty_request() };
+    check_request(&probe, &roots)?;
     let mc = Path::new(&minecraft_dir);
     let r = resolve_version(mc, &version_id)?;
     let id = r.json.asset_index.map(|a| a.id).or(r.json.assets).unwrap_or_default();
@@ -329,9 +381,72 @@ pub fn launch_missing_assets(minecraft_dir: String, version_id: String) -> Resul
     Ok(assets::missing_assets(&mc.join("assets"), &idx))
 }
 
+fn empty_request() -> LaunchRequest {
+    LaunchRequest {
+        minecraft_dir: String::new(),
+        version_id: String::new(),
+        auth: AuthData { name: String::new(), uuid: String::new(), access_token: String::new(), user_type: String::new() },
+        java_path: None,
+        game_dir: None,
+        max_memory_mb: None,
+        min_memory_mb: None,
+        extra_jvm_args: vec![],
+        extra_game_args: vec![],
+        demo: false,
+        resolution: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn req_in(root: &Path) -> LaunchRequest {
+        LaunchRequest { minecraft_dir: root.display().to_string(), version_id: "1.20.1".into(), ..empty_request() }
+    }
+
+    #[test]
+    fn webview_requests_are_validated() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("mc");
+        std::fs::create_dir_all(root.join("versions/1.20.1")).unwrap();
+        let roots = vec![root.clone()];
+        assert!(check_request(&req_in(&root), &roots).is_ok());
+
+        // Unregistered folder, traversal in the version id.
+        assert!(check_request(&req_in(d.path()), &roots).is_err());
+        let mut r = req_in(&root);
+        r.version_id = "../../etc".into();
+        assert!(check_request(&r, &roots).is_err());
+        r.version_id = "".into();
+        assert!(check_request(&r, &roots).is_err());
+
+        // java_path must be a real `java`, not a shell or a script called java.
+        let mut r = req_in(&root);
+        r.java_path = Some("/bin/sh".into());
+        assert!(check_request(&r, &roots).is_err());
+        r.java_path = Some("/usr/bin/open".into());
+        assert!(check_request(&r, &roots).is_err());
+        let script = d.path().join("bin/java");
+        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+        std::fs::write(&script, "#!/bin/sh\ntouch /tmp/pcl-should-not-run\n").unwrap();
+        r.java_path = Some(script.display().to_string());
+        assert!(check_request(&r, &roots).is_err());
+
+        // game_dir must stay inside the registered folder.
+        let mut r = req_in(&root);
+        r.game_dir = Some(d.path().join("elsewhere").display().to_string());
+        assert!(check_request(&r, &roots).is_err());
+        r.game_dir = Some(root.join("versions/1.20.1").display().to_string());
+        assert!(check_request(&r, &roots).is_ok());
+
+        // Code-loading JVM flags are refused, memory flags are fine.
+        let mut r = req_in(&root);
+        r.extra_jvm_args = vec!["-Xmx2G".into(), "-javaagent:/tmp/evil.jar".into()];
+        assert!(check_request(&r, &roots).is_err());
+        r.extra_jvm_args = vec!["-Xmx2G".into(), "-XX:+UseG1GC".into()];
+        assert!(check_request(&r, &roots).is_ok());
+    }
 
     #[test]
     fn precheck_reports_missing_version() {

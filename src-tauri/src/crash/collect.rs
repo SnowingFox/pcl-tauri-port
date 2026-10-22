@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 
 /// A log file only counts for an automatic analysis if it was written this recently.
 pub const RECENT_WINDOW: Duration = Duration::from_secs(3 * 60);
-const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {

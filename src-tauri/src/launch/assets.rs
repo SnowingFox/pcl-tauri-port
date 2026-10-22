@@ -34,13 +34,23 @@ pub fn index_path(assets_root: &Path, id: &str) -> PathBuf {
 }
 
 pub fn object_path(assets_root: &Path, hash: &str) -> PathBuf {
-    assets_root.join("objects").join(&hash[..2.min(hash.len())]).join(hash)
+    assets_root.join("objects").join(hash.get(..2).unwrap_or("00")).join(hash)
 }
 
+/// The index file is untrusted (it may come from a shared instance or a tampered download):
+/// the id must be one path component and every hash / legacy name must be a safe path.
 pub fn load_index(assets_root: &Path, id: &str) -> Result<AssetIndexFile, LaunchError> {
+    use crate::settings::guard::{is_hex_hash, is_safe_component, is_safe_rel};
+    if !is_safe_component(id) {
+        return Err(LaunchError::VersionJson(format!("unsafe asset index id: {id}")));
+    }
     let p = index_path(assets_root, id);
     let text = std::fs::read_to_string(&p).map_err(|e| LaunchError::Io(format!("{}: {e}", p.display())))?;
-    serde_json::from_str(&text).map_err(|e| LaunchError::VersionJson(format!("asset index {id}: {e}")))
+    let idx: AssetIndexFile = serde_json::from_str(&text).map_err(|e| LaunchError::VersionJson(format!("asset index {id}: {e}")))?;
+    if let Some((name, o)) = idx.objects.iter().find(|(n, o)| !is_hex_hash(&o.hash) || !is_safe_rel(n)) {
+        return Err(LaunchError::VersionJson(format!("asset index {id}: unsafe entry {name:?} / {:?}", o.hash)));
+    }
+    Ok(idx)
 }
 
 pub fn missing_assets(assets_root: &Path, idx: &AssetIndexFile) -> Vec<MissingAsset> {
@@ -81,6 +91,31 @@ pub fn materialize_legacy(assets_root: &Path, game_dir: &Path, idx: &AssetIndexF
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostile_index_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("indexes")).unwrap();
+        let write = |id: &str, body: &str| std::fs::write(root.join("indexes").join(format!("{id}.json")), body).unwrap();
+        write("ok", r#"{"objects":{"minecraft/sounds/a.ogg":{"hash":"abcdef0123","size":3}}}"#);
+        assert!(load_index(root, "ok").is_ok());
+        write("h1", r#"{"objects":{"a":{"hash":"../../../../.ssh/authorized_keys","size":3}}}"#);
+        assert!(load_index(root, "h1").is_err());
+        write("h2", r#"{"objects":{"../../../escape":{"hash":"abcdef0123","size":3}},"virtual":true}"#);
+        assert!(load_index(root, "h2").is_err());
+        write("h3", r#"{"objects":{"/etc/passwd":{"hash":"abcdef0123","size":3}}}"#);
+        assert!(load_index(root, "h3").is_err());
+        write("h4", r#"{"objects":{"a":{"hash":"é","size":3}}}"#);
+        assert!(load_index(root, "h4").is_err());
+        // The index id itself is a path component.
+        assert!(load_index(root, "../ok").is_err());
+        assert!(load_index(root, "a/b").is_err());
+        assert!(load_index(root, "").is_err());
+        // object_path never panics on short or multi-byte hashes.
+        let _ = object_path(root, "é");
+        let _ = object_path(root, "");
+    }
 
     #[test]
     fn missing_detection() {

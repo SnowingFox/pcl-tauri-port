@@ -19,12 +19,23 @@ pub struct Profile {
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AuthResult {
     pub access_token: String,
     pub client_token: String,
     pub profile: Option<Profile>,
     pub available: Vec<Profile>,
+}
+
+impl std::fmt::Debug for AuthResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthResult")
+            .field("access_token", &"<redacted>")
+            .field("client_token", &"<redacted>")
+            .field("profile", &self.profile)
+            .field("available", &self.available)
+            .finish()
+    }
 }
 
 /// Accepts `example.com/api`, `https://...`, or `authlib-injector:yggdrasil-server:<urlencoded>`.
@@ -46,6 +57,27 @@ pub fn normalize_url(input: &str) -> Result<String> {
     Ok(u.as_str().trim_end_matches('/').to_string())
 }
 
+/// A password may only be sent over https, or over http to a host on the local network
+/// (self-hosted servers). Public hosts on plain http are refused.
+pub fn ensure_secure_for_credentials(url: &str) -> Result<()> {
+    let u = url::Url::parse(url).map_err(|e| AccountError::Invalid(format!("bad server URL: {e}")))?;
+    let lan = crate::settings::guard::host_blocked(&u, crate::settings::guard::HostPolicy::Public);
+    if u.scheme() == "https" || lan {
+        Ok(())
+    } else {
+        Err(AccountError::Invalid("登录服务器必须使用 https（局域网服务器除外），否则密码会以明文发送".into()))
+    }
+}
+
+/// `normalize_url` plus the SSRF rules for user-supplied servers: no credentials in the URL,
+/// no loopback / link-local / unspecified hosts (LAN servers are fine). Mock servers in tests
+/// call `normalize_url` directly.
+pub fn checked_server_url(input: &str) -> Result<String> {
+    let s = normalize_url(input)?;
+    crate::settings::guard::check_remote_url(&s, crate::settings::guard::HostPolicy::AllowLan).map_err(AccountError::Invalid)?;
+    Ok(s)
+}
+
 pub fn parse_meta_name(body: &str) -> Result<String> {
     let v: serde_json::Value = serde_json::from_str(body)?;
     Ok(v["meta"]["serverName"].as_str().unwrap_or("Third-party server").to_string())
@@ -60,6 +92,9 @@ pub async fn discover(c: &reqwest::Client, input: &str) -> Result<ServerInfo> {
             let next = r.url().join(loc).map_err(|e| AccountError::BadResponse(e.to_string()))?;
             let next = next.as_str().trim_end_matches('/').to_string();
             if next != url {
+                // The hint is server-controlled: it must pass the same host rules as the typed URL,
+                // otherwise a server could point us at http://127.0.0.1:... (IP literals skip DNS filtering).
+                checked_server_url(&next)?;
                 url = next;
                 continue;
             }
@@ -187,6 +222,38 @@ mod tests {
             "https://a.b/api"
         );
         assert!(normalize_url("ftp://x").is_err());
+    }
+
+    #[test]
+    fn server_urls_are_checked() {
+        assert!(checked_server_url("example.com/api/yggdrasil").is_ok());
+        assert!(checked_server_url("http://192.168.1.20:8080/api").is_ok(), "LAN servers are allowed");
+        assert!(checked_server_url("authlib-injector:yggdrasil-server:https%3A%2F%2Fa.example%2Fapi").is_ok());
+        for bad in ["http://127.0.0.1:8080", "http://localhost/api", "https://169.254.169.254/latest", "https://user:pw@example.com/api", "file:///etc/passwd", "ftp://x/y", "http://0.0.0.0/"] {
+            assert!(checked_server_url(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn credentials_need_https_or_lan() {
+        assert!(ensure_secure_for_credentials("https://auth.example.org/api").is_ok());
+        assert!(ensure_secure_for_credentials("http://192.168.1.20:8080/api").is_ok());
+        assert!(ensure_secure_for_credentials("http://nas.local/api").is_ok());
+        assert!(ensure_secure_for_credentials("http://auth.example.org/api").is_err());
+        assert!(ensure_secure_for_credentials("http://93.184.216.34/api").is_err());
+    }
+
+    #[tokio::test]
+    async fn api_location_hint_cannot_point_at_loopback() {
+        let s = MockServer::start().await;
+        // The mock listens on 127.0.0.1; a hint pointing back at it must be refused.
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).insert_header("X-Authlib-Injector-API-Location", format!("{}/api", s.uri()).as_str()).set_body_string(r#"{"meta":{"serverName":"T"}}"#))
+            .mount(&s)
+            .await;
+        let e = discover(&reqwest::Client::new(), &s.uri()).await.unwrap_err();
+        assert!(matches!(e, AccountError::Invalid(_)), "{e}");
     }
 
     #[test]

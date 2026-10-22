@@ -208,6 +208,13 @@ pub fn scan_mods_dir(dir: &Path) -> Result<Vec<LocalMod>> {
 /// Rename `x.jar` <-> `x.jar.disabled`. Returns the new path.
 pub fn set_mod_enabled(path: &Path, enabled: bool) -> Result<PathBuf> {
     let name = path.file_name().and_then(|n| n.to_str()).ok_or("invalid path")?;
+    // Only mod files may be renamed (never `~/.zshrc` -> `~/.zshrc.disabled`), and never through a symlink.
+    if !is_mod_file(name) {
+        return Err(format!("{name} is not a mod file"));
+    }
+    if std::fs::symlink_metadata(path).map(|m| !m.file_type().is_file()).unwrap_or(true) {
+        return Err(format!("{name} is not a regular file"));
+    }
     let new_name = match (enabled, is_disabled(name)) {
         (true, true) => name[..name.len() - ".disabled".len()].to_string(),
         (false, false) => format!("{name}.disabled"),
@@ -350,6 +357,14 @@ mod tests {
         assert!(p.ends_with("a.jar.disabled") && p.exists());
         let p = set_mod_enabled(&p, true).unwrap();
         assert!(p.ends_with("a.jar"));
+        // Only mod files can be toggled: arbitrary files must not be renamed.
+        std::fs::write(dir.join("notes.txt"), "x").unwrap();
+        assert!(set_mod_enabled(&dir.join("notes.txt"), false).is_err());
+        assert!(dir.join("notes.txt").exists() && !dir.join("notes.txt.disabled").exists());
+        std::os::unix::fs::symlink("/etc/hosts", dir.join("link.jar")).unwrap();
+        assert!(set_mod_enabled(&dir.join("link.jar"), false).is_err());
+        assert!(set_mod_enabled(&dir.join("missing.jar"), false).is_err());
+        std::fs::remove_file(dir.join("link.jar")).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

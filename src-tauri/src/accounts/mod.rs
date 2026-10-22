@@ -84,7 +84,7 @@ pub type Result<T> = std::result::Result<T, AccountError>;
 
 /// Everything the launcher needs to start the game for one account.
 /// `uuid` is the undashed lowercase hex form used on the command line.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthSession {
     pub player_name: String,
@@ -98,6 +98,46 @@ pub struct AuthSession {
     pub client_token: Option<String>,
     /// Set for third-party accounts: needs `-javaagent` with authlib-injector.
     pub authlib_injector: Option<AuthlibInjectorConfig>,
+}
+
+/// Tokens never appear in `{:?}` output (logs, panics, assertion messages).
+impl std::fmt::Debug for AuthSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthSession")
+            .field("player_name", &self.player_name)
+            .field("uuid", &self.uuid)
+            .field("access_token", &"<redacted>")
+            .field("user_type", &self.user_type)
+            .field("account_kind", &self.account_kind)
+            .field("client_token", &self.client_token.as_ref().map(|_| "<redacted>"))
+            .field("authlib_injector", &self.authlib_injector.as_ref().map(|a| &a.server_url))
+            .finish()
+    }
+}
+
+/// What the webview gets to see of a session: no access or client token. The tokens stay in
+/// Rust; the launch pipeline reads them with `AccountManager::session` directly.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    pub player_name: String,
+    pub uuid: String,
+    pub user_type: String,
+    pub account_kind: String,
+    /// Third-party server URL when the account needs authlib-injector.
+    pub authlib_server_url: Option<String>,
+}
+
+impl From<&AuthSession> for SessionSummary {
+    fn from(s: &AuthSession) -> Self {
+        Self {
+            player_name: s.player_name.clone(),
+            uuid: s.uuid.clone(),
+            user_type: s.user_type.clone(),
+            account_kind: s.account_kind.clone(),
+            authlib_server_url: s.authlib_injector.as_ref().map(|a| a.server_url.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -140,6 +180,25 @@ pub fn dash(uuid: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_debug_and_summary_hide_tokens() {
+        let s = AuthSession {
+            player_name: "Notch".into(),
+            uuid: "b50ad385829d3141a2167e7d7539ba7f".into(),
+            access_token: "SECRET-ACCESS".into(),
+            user_type: "mojang".into(),
+            account_kind: "yggdrasil".into(),
+            client_token: Some("SECRET-CLIENT".into()),
+            authlib_injector: Some(AuthlibInjectorConfig { server_url: "https://auth.example/api".into(), prefetched: Some("SECRET-META".into()) }),
+        };
+        let dbg = format!("{s:?} {:#?}", s);
+        assert!(!dbg.contains("SECRET"), "{dbg}");
+        assert!(dbg.contains("Notch") && dbg.contains("<redacted>"));
+        let summary = serde_json::to_string(&SessionSummary::from(&s)).unwrap();
+        assert!(!summary.contains("SECRET") && !summary.contains("accessToken") && !summary.contains("clientToken"), "{summary}");
+        assert!(summary.contains("auth.example"));
+    }
+
     #[test]
     fn dash_roundtrip() {
         let d = "b50ad385-829d-3141-a216-7e7d7539ba7f";

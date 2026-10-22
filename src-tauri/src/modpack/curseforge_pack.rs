@@ -82,7 +82,9 @@ pub fn apply_resolved(plan: &mut ModpackInstallPlan, found: Vec<ResourceFile>) -
         if !seen.insert(r.file_id) {
             continue; // CurseForge sometimes lists duplicates
         }
-        let Some(rf) = by_id.get(&r.file_id) else {
+        // `fileName` comes from the API: it becomes a path below the instance, so it must be a
+        // single plain component. Anything else is reported like a file that no longer exists.
+        let Some(rf) = by_id.get(&r.file_id).filter(|rf| crate::settings::guard::is_safe_component(&rf.file_name)) else {
             missing.push(r);
             continue;
         };
@@ -126,6 +128,16 @@ mod tests {
         assert_eq!(p.files[0].path, "mods/a.jar");
         assert_eq!(p.files[1].path, "resourcepacks/pack.zip");
         assert!(p.files[0].urls[0].starts_with("https://edge.forgecdn.net/files/0/10/"));
+    }
+
+    #[test]
+    fn hostile_api_file_names_are_not_installed() {
+        let mut p = parse(MF, "").unwrap();
+        let missing = apply_resolved(&mut p, vec![rf(10, "../../../../.zshrc"), rf(20, "ok.zip"), rf(30, "a/b.jar")]);
+        // 10 and 30 carry path separators and are treated like files that no longer exist upstream.
+        assert_eq!(missing.iter().map(|m| m.file_id).collect::<Vec<_>>(), vec![10, 30]);
+        assert_eq!(p.files.len(), 1);
+        assert_eq!(p.files[0].path, "resourcepacks/ok.zip");
     }
 
     #[test]

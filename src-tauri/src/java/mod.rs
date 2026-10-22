@@ -108,6 +108,53 @@ pub fn binary_arch(path: &Path) -> Option<String> {
     }
 }
 
+/// Only a real Java launcher may be executed with arguments that come from the UI:
+/// the file must be named `java` (`java.exe` on Windows) and be a Mach-O / ELF binary.
+/// This keeps `java_inspect`, `launch_start` and `install_loader` from being turned into
+/// "run any program" primitives (`/bin/sh`, scripts, `rm`, ...).
+pub fn is_java_launcher(exe: &Path) -> bool {
+    let want = if cfg!(windows) { "java.exe" } else { "java" };
+    let named = |p: &Path| p.file_name().map(|n| n == want).unwrap_or(false);
+    // Both the given path and its symlink target must be called `java`, so a link named
+    // `java` that points at /bin/sh is refused.
+    named(exe) && exe.canonicalize().map(|c| named(&c) && c.is_file()).unwrap_or(false) && is_executable(exe) && binary_arch(exe).is_some()
+}
+
+/// The launcher never sets the executable bit on anything it downloads or unzips, so a file
+/// fetched through `download_start_file` or a modpack can never pass as a Java launcher.
+fn is_executable(p: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        p.is_file()
+    }
+}
+
+/// Validate a user-supplied java executable path before it is executed.
+pub fn check_java_exe(path: &str) -> Result<(), String> {
+    if is_java_launcher(Path::new(path)) {
+        Ok(())
+    } else {
+        Err(format!("不是有效的 Java 可执行文件（必须是名为 java 的程序）：{path}"))
+    }
+}
+
+/// Like [`check_java_exe`] but also accepts a java home directory (`<home>/bin/java`),
+/// which is what settings and the file picker may hold.
+pub fn check_java_path(path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    let exe = if p.is_dir() { p.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" }) } else { p.to_path_buf() };
+    if is_java_launcher(&exe) {
+        Ok(())
+    } else {
+        Err(format!("不是有效的 Java（必须是名为 java 的程序，或包含 bin/java 的目录）：{path}"))
+    }
+}
+
 /// Inspect a java home or executable path.
 pub fn inspect(path: &Path) -> Option<JavaInfo> {
     let exe_name = if cfg!(windows) { "java.exe" } else { "java" };
@@ -117,7 +164,7 @@ pub fn inspect(path: &Path) -> Option<JavaInfo> {
     } else {
         (path.to_path_buf(), path.join("bin").join(exe_name))
     };
-    if !exe.is_file() {
+    if !is_java_launcher(&exe) {
         return None;
     }
     let exe = exe.canonicalize().unwrap_or(exe);
@@ -276,9 +323,15 @@ pub fn default_major_for_mc(mc: &str) -> u32 {
 }
 
 #[tauri::command]
-pub fn java_discover(extra_dirs: Option<Vec<String>>) -> Vec<JavaInfo> {
-    let dirs: Vec<PathBuf> = extra_dirs.unwrap_or_default().into_iter().map(PathBuf::from).collect();
-    discover(&dirs)
+pub fn java_discover(extra_dirs: Option<Vec<String>>) -> Result<Vec<JavaInfo>, String> {
+    // Extra search roots (e.g. `<mc>/runtime`) must lie inside a registered Minecraft folder:
+    // discovery lists directories and executes the `java` binaries it finds.
+    let dirs: Vec<PathBuf> = extra_dirs
+        .unwrap_or_default()
+        .iter()
+        .map(|d| crate::settings::guard::confine_to_registered(Path::new(d)))
+        .collect::<Result<_, _>>()?;
+    Ok(discover(&dirs))
 }
 
 /// Validate a user-supplied java executable or home.
@@ -344,6 +397,44 @@ mod tests {
         } else {
             assert_eq!(select_for(&list, 17).unwrap().major, 21);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspect_refuses_non_java_executables() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        // A script named like a JVM that would print a plausible version if it were run.
+        let bin = d.path().join("evil/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let script = bin.join("java");
+        std::fs::write(&script, "#!/bin/sh\ntouch \"$(dirname \"$0\")/pwned\"\necho 'java version \"17.0.1\"' >&2\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(inspect(&script).is_none(), "script named java must not be executed");
+        assert!(inspect(&d.path().join("evil")).is_none());
+        assert!(!bin.join("pwned").exists(), "the script must not have run");
+        // A real binary that is not called java.
+        assert!(inspect(Path::new("/bin/sh")).is_none());
+        assert!(inspect(Path::new("/bin/ls")).is_none());
+        assert!(check_java_exe("/bin/sh").is_err());
+        assert!(check_java_exe("").is_err());
+        assert!(check_java_exe("../../bin/sh").is_err());
+        // A real Mach-O copied to a file called `java` passes the shape check (it is only run with -version).
+        let copy = d.path().join("ok/bin/java");
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        std::fs::copy("/bin/ls", &copy).unwrap();
+        assert!(is_java_launcher(&copy));
+        // Without the executable bit (everything the launcher writes itself) it is refused.
+        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!is_java_launcher(&copy));
+        assert!(inspect(&copy).is_none());
+        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A symlink called `java` that points at another program is refused.
+        let link = d.path().join("link/bin/java");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/bin/sh", &link).unwrap();
+        assert!(!is_java_launcher(&link));
+        assert!(inspect(&link).is_none());
     }
 
     #[test]

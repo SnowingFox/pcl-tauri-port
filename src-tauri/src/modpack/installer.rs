@@ -46,8 +46,8 @@ mod tests {
     #[test]
     fn orchestrates_in_order() {
         let idx = r#"{"name":"P","dependencies":{"minecraft":"1.20.1","forge":"47.1.0"},
-          "files":[{"path":"mods/a.jar","hashes":{"sha1":"a"},"downloads":["https://x/a"]},
-                   {"path":"mods/o.jar","hashes":{"sha1":"o"},"downloads":["https://x/o"],"env":{"client":"optional"}}]}"#;
+          "files":[{"path":"mods/a.jar","hashes":{"sha1":"a"},"downloads":["https://cdn.modrinth.com/data/x/a"]},
+                   {"path":"mods/o.jar","hashes":{"sha1":"o"},"downloads":["https://cdn.modrinth.com/data/x/o"],"env":{"client":"optional"}}]}"#;
         let dir = std::env::temp_dir().join(format!("pcl-inst-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

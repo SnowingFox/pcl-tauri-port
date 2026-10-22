@@ -85,6 +85,12 @@ pub fn save(dir: &Path, data: &StoreData) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join("accounts.json.tmp");
     std::fs::write(&tmp, serde_json::to_vec_pretty(data)?)?;
+    // Owner-only: the file lists account names, UUIDs and server URLs (tokens live in the Keychain).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    }
     std::fs::rename(tmp, file_path(dir))?;
     Ok(())
 }
@@ -111,6 +117,17 @@ mod tests {
         let l = load(&dir).unwrap();
         assert_eq!(l.accounts.len(), 2);
         assert_eq!(l.accounts[1].info().kind, "microsoft");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn accounts_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("pcl-acc-perm-{}", uuid::Uuid::new_v4()));
+        save(&dir, &StoreData::default()).unwrap();
+        let mode = std::fs::metadata(file_path(&dir)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
         std::fs::remove_dir_all(dir).ok();
     }
 

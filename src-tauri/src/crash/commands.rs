@@ -40,6 +40,11 @@ pub fn crash_analyze_file(path: String) -> Result<CrashAnalysis, String> {
     if ext != "log" && ext != "txt" {
         return Err("仅支持 .log 与 .txt 文件".into());
     }
+    // Same limit as the automatic collector; a multi-gigabyte "log" must not be read into memory.
+    let len = fs::metadata(&p).map_err(|e| e.to_string())?.len();
+    if len > super::collect::MAX_FILE_BYTES {
+        return Err(format!("文件过大（{} MB），最大支持 {} MB", len >> 20, super::collect::MAX_FILE_BYTES >> 20));
+    }
     let bytes = fs::read(&p).map_err(|e| e.to_string())?;
     let lines: Vec<String> = String::from_utf8_lossy(&bytes).lines().map(String::from).collect();
     let c = if name.starts_with("hs_err") || name.starts_with("crash-") || name == "latest.log" || name == "debug.log" {

@@ -152,7 +152,7 @@ async fn fetch_profile_libs(ctx: &TaskCtx, libs_raw: &[Value], installer: &Path,
         let lib: crate::download::manifest::Library = serde_json::from_value(l.clone())?;
         if let Some(a) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) {
             if a.url.is_empty() {
-                if let Some(p) = a.path.clone().or_else(|| maven_path(&lib.name)) {
+                if let Some(p) = a.path.clone().or_else(|| maven_path(&lib.name)).filter(|p| crate::settings::guard::is_safe_rel(p)) {
                     bundled.push(p);
                 }
                 continue;
@@ -227,6 +227,9 @@ pub async fn install_forge_like(ctx: &TaskCtx, mgr: &Arc<Manager>, fl: Flavor, m
         let coord = prof_raw["install"]["path"].as_str().ok_or("old profile: install.path")?;
         let entry = prof_raw["install"]["filePath"].as_str().ok_or("old profile: install.filePath")?.to_string();
         let dest = libs.join(maven_path(coord).ok_or("bad maven coord")?);
+        if !crate::settings::guard::is_safe_rel(&entry) {
+            return Err(DlError::Other(format!("unsafe filePath in installer profile: {entry:?}")));
+        }
         let i = installer.clone();
         tokio::task::spawn_blocking(move || extract_entry(&i, &entry, &dest)).await.map_err(|e| DlError::Other(e.to_string()))??;
         let l = vi["libraries"].as_array().cloned().unwrap_or_default();
@@ -262,6 +265,9 @@ pub async fn install_forge_like(ctx: &TaskCtx, mgr: &Arc<Manager>, fl: Flavor, m
         vars.insert("LIBRARY_DIR".into(), libs.to_string_lossy().into());
         for (k, v) in &p.data {
             if let Some(entry) = v.strip_prefix('/') {
+                if !crate::settings::guard::is_safe_rel(entry) {
+                    return Err(DlError::Other(format!("unsafe data entry in installer profile: {entry:?}")));
+                }
                 let dest = tmp.join("data").join(entry);
                 let (i, e, d) = (installer.clone(), entry.to_string(), dest.clone());
                 tokio::task::spawn_blocking(move || extract_entry(&i, &e, &d)).await.map_err(|e| DlError::Other(e.to_string()))??;

@@ -55,9 +55,9 @@ pub async fn fetch_skin_info(c: &reqwest::Client, profile_base: &str, uuid: &str
 
 /// Fetch the skin PNG as a `data:` URL (https only). Falls back to None.
 pub async fn skin_data_url(c: &reqwest::Client, url: &str) -> Result<String> {
-    if !url.starts_with("https://") && !url.starts_with("http://") {
-        return Err(AccountError::Invalid("skin URL must be http(s)".into()));
-    }
+    // The URL comes from a (possibly third-party) session server response.
+    let allow = crate::settings::guard::HostPolicy::AllowLan;
+    crate::settings::guard::check_remote_url(url, allow).map_err(|e| AccountError::Invalid(format!("skin URL: {e}")))?;
     let bytes = c.get(url).send().await?.error_for_status()?.bytes().await?;
     Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
@@ -77,6 +77,15 @@ mod tests {
         assert_eq!(default_is_alex("b50ad385-829d-3141-a216-7e7d7539ba7f"), default_is_alex("b50ad385829d3141a2167e7d7539ba7f"));
         assert!(default_is_alex("00000000-0000-0000-0000-000000000001"));
         assert!(!default_is_alex("00000000-0000-0000-0000-000000000000"));
+    }
+
+    #[tokio::test]
+    async fn skin_urls_are_checked_before_any_request() {
+        let c = reqwest::Client::new();
+        for bad in ["file:///etc/passwd", "http://127.0.0.1:1/skin.png", "http://169.254.169.254/latest/meta-data", "gopher://x/y"] {
+            let e = skin_data_url(&c, bad).await.unwrap_err();
+            assert!(matches!(e, AccountError::Invalid(_)), "{bad}: {e}");
+        }
     }
 
     #[test]

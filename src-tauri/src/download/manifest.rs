@@ -159,7 +159,10 @@ pub fn maven_path(coord: &str) -> Option<String> {
     }
     let (g, a, v) = (p[0].replace('.', "/"), p[1], p[2]);
     let cls = p.get(3).map(|c| format!("-{c}")).unwrap_or_default();
-    Some(format!("{g}/{a}/{v}/{a}-{v}{cls}.{ext}"))
+    let out = format!("{g}/{a}/{v}/{a}-{v}{cls}.{ext}");
+    // Coordinates come from remote JSON and installer jars: refuse anything that would leave
+    // the libraries folder (`g:../..:1`, absolute groups, empty segments).
+    crate::settings::guard::is_safe_rel(&out).then_some(out)
 }
 
 pub struct LibFile {
@@ -172,6 +175,14 @@ pub struct LibFile {
 impl Library {
     /// Files to fetch for this library on the host platform (main artifact and/or native classifier).
     pub fn files(&self, os: &str, arch: &str) -> Vec<LibFile> {
+        let mut out = self.files_unchecked(os, arch);
+        // Library paths come from remote version JSON: drop anything that is not a plain
+        // relative path (`../..`, absolute, backslashes) so it can never leave `libraries/`.
+        out.retain(|f| crate::settings::guard::is_safe_rel(&f.path));
+        out
+    }
+
+    fn files_unchecked(&self, os: &str, arch: &str) -> Vec<LibFile> {
         if !rules_allow(&self.rules, os, arch) {
             return vec![];
         }
@@ -225,8 +236,12 @@ pub struct AssetObject {
 }
 
 impl AssetObject {
+    /// Asset hashes come from a downloaded index: only hex digits may become a path.
+    pub fn is_valid(&self) -> bool {
+        crate::settings::guard::is_hex_hash(&self.hash)
+    }
     pub fn rel_path(&self) -> String {
-        format!("{}/{}", &self.hash[..2], self.hash)
+        format!("{}/{}", self.hash.get(..2).unwrap_or("00"), self.hash)
     }
     pub fn url(&self) -> String {
         format!("https://resources.download.minecraft.net/{}", self.rel_path())
@@ -293,5 +308,38 @@ mod tests {
         let o = AssetObject { hash: "abcdef0123".into(), size: 1 };
         assert_eq!(o.rel_path(), "ab/abcdef0123");
         assert!(o.url().ends_with("/ab/abcdef0123"));
+        assert!(o.is_valid());
+        // Hostile index entries: traversal, short and multi-byte hashes must not panic or be valid.
+        for h in ["../../../../etc/cron.d/x", "a", "é", "日本語日本語", "ab/cd", ""] {
+            let o = AssetObject { hash: h.into(), size: 1 };
+            assert!(!o.is_valid(), "{h:?}");
+            let _ = o.rel_path();
+        }
+    }
+
+    #[test]
+    fn maven_path_rejects_traversal() {
+        assert!(maven_path("g:../../../../tmp:1").is_none());
+        assert!(maven_path("g:a:../../..").is_none());
+        assert!(maven_path("g:a:1:../../x").is_none());
+        assert!(maven_path("g:a:1@../../x").is_none());
+        assert!(maven_path("/abs:a:1").is_none());
+        // A slash inside a segment only nests deeper; it cannot leave the libraries folder.
+        assert!(maven_path("g:a/b:1").is_some_and(|p| !p.contains("..") && !p.starts_with('/')));
+        assert!(maven_path("net.minecraftforge:forge:1.20.1-47.2.0:installer").is_some());
+    }
+
+    #[test]
+    fn library_files_ignore_unsafe_paths() {
+        let l: Library = serde_json::from_str(
+            r#"{"name":"o:n:1","downloads":{"artifact":{"path":"../../../.zshrc","url":"https://u/a.jar","sha1":"s","size":3}}}"#,
+        )
+        .unwrap();
+        assert!(l.files("osx", "arm64").is_empty());
+        let l: Library = serde_json::from_str(
+            r#"{"name":"o:n:1","downloads":{"classifiers":{"natives-osx":{"path":"/etc/x","url":"https://u/n","sha1":"x","size":1}}},"natives":{"osx":"natives-osx"}}"#,
+        )
+        .unwrap();
+        assert!(l.files("osx", "arm64").is_empty());
     }
 }
