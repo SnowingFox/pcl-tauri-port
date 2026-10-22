@@ -116,7 +116,19 @@ impl AccountManager {
     // ---- offline ----
     pub fn add_offline(&self, name: &str) -> Result<AccountInfo> {
         offline::validate_name(name)?;
-        self.add(AccountKind::Offline { name: name.into(), uuid: offline::offline_uuid(name) })
+        let uuid = offline::offline_uuid(name);
+        // The offline UUID is derived from the exact name, so the same name is the same player.
+        // Adding it again (e.g. retrying after a failed login) must not pile up duplicates; like a
+        // Microsoft re-login it returns the existing entry, now selected.
+        let existing = self.data.lock().unwrap().accounts.iter().find_map(|a| match &a.kind {
+            AccountKind::Offline { uuid: u, .. } if *u == uuid => Some(a.id.clone()),
+            _ => None,
+        });
+        if let Some(id) = existing {
+            self.select(&id)?;
+            return Ok(self.get(&id)?.info());
+        }
+        self.add(AccountKind::Offline { name: name.into(), uuid })
     }
 
     // ---- microsoft ----
@@ -303,6 +315,24 @@ mod tests {
         m.remove(&a.id).unwrap();
         assert!(m.list().is_empty() && m.selected().is_none());
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn adding_the_same_offline_name_again_returns_the_existing_account() {
+        let (m, dir) = mgr();
+        let first = m.add_offline("Steve").unwrap();
+        let other = m.add_offline("Alex").unwrap();
+        m.select(&other.id).unwrap();
+
+        let again = m.add_offline("Steve").unwrap();
+        assert_eq!(again.id, first.id, "same name must map to the same entry");
+        assert_eq!(m.list().len(), 2, "no duplicate was added");
+        assert_eq!(m.selected().as_deref(), Some(first.id.as_str()), "re-adding selects it");
+
+        // Names are case-sensitive for the offline UUID, so these are different players.
+        m.add_offline("steve").unwrap();
+        assert_eq!(m.list().len(), 3);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
