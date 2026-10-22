@@ -1,11 +1,13 @@
 import { useNavigate } from "react-router-dom";
 import { Button, Dialog } from "../../components/ui";
+import { CrashSummary } from "./CrashSummary";
 import { useGame } from "../../store/game";
 import { t } from "../../i18n";
 
 /** Global dialog shown when the game exits with a crash. */
 export function CrashDialog() {
   const exit = useGame((s) => s.lastExit);
+  const instance = useGame((s) => s.launchedInstance);
   const dismiss = useGame((s) => s.dismissExit);
   const nav = useNavigate();
   if (!exit?.crashed) return null;
@@ -16,9 +18,7 @@ export function CrashDialog() {
         <Button variant="primary" onClick={dismiss}>{t("common.ok")}</Button>
       </>
     }>
-      <p style={{ margin: 0 }}>{t("others.exitCode")}: {exit.code}</p>
-      {exit.reason && <p style={{ margin: 0 }}>{t("others.crashReason")}: {exit.reason}</p>}
-      <p className="dim" style={{ margin: 0 }}>{t("others.crashAdvice")}</p>
+      <CrashSummary exit={exit} instance={instance} onNavigate={() => dismiss()} />
     </Dialog>
   );
 }

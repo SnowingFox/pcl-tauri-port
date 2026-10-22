@@ -1,6 +1,7 @@
 import type { DownloadApi } from "../download";
 import type { GameVersion } from "../types";
-import { delay, mockEmit, mockOn, uid } from "./bus";
+import { AppError } from "../errors";
+import { delay, mockCancelTask, mockOn, mockPauseTask, mockResumeTask, mockRunTask, uid } from "./bus";
 
 const versions: GameVersion[] = [
   { id: "1.21.4", type: "release", releaseTime: "2024-12-03" },
@@ -12,7 +13,6 @@ const versions: GameVersion[] = [
   { id: "b1.7.3", type: "old_beta", releaseTime: "2011-07-08" },
   { id: "a1.2.6", type: "old_alpha", releaseTime: "2010-12-03" },
 ];
-const cancelled = new Set<string>();
 
 export const downloadMock: DownloadApi = {
   async gameVersions() {
@@ -22,27 +22,26 @@ export const downloadMock: DownloadApi = {
   async loaderVersions(loader, mc) {
     await delay();
     if (loader === "vanilla") return [];
-    return [`${loader}-${mc}-3`, `${loader}-${mc}-2`, `${loader}-${mc}-1`];
+    return [3, 2, 1].map((n) => ({ version: `${loader}-${mc}-${n}`, stable: n !== 3 }));
   },
-  async install(req) {
+  async installGame(req) {
     await delay(60);
-    if (!req.name.trim()) throw new Error("invalid_name");
+    if (!req.mcVersion) throw new AppError("INVALID_ARGUMENT", "mcVersion is required");
     const taskId = uid("dl");
-    let n = 0;
-    const tick = () => {
-      if (cancelled.has(taskId)) {
-        mockEmit("download://progress", { taskId, progress: n / 10, message: "已取消", done: true, error: "cancelled" });
-        return;
-      }
-      n++;
-      mockEmit("download://progress", { taskId, progress: n / 10, message: n < 10 ? "下载文件中" : "安装完成", done: n >= 10 });
-      if (n < 10) setTimeout(tick, 250);
-    };
-    setTimeout(tick, 250);
+    mockRunTask(taskId, `${req.mcVersion}${req.loader ? ` ${req.loader.kind}` : ""}`);
     return taskId;
   },
-  async cancel(taskId) {
-    cancelled.add(taskId);
-  },
-  onProgress: (cb) => mockOn("download://progress", cb),
+  async pause(id) { mockPauseTask(id); },
+  async resume(id) { mockResumeTask(id); },
+  async cancel(id) { mockCancelTask(id); },
+  async listTasks() { return []; },
+  async clearFinished() {},
+  onProgress: (cb) => mockOn("download://progress", (p: Record<string, unknown>) => cb(adaptProgress(p))),
+  onFinished: (cb) => mockOn("download://finished", (f: Record<string, unknown>) => cb(adaptFinished(f))),
+  onModpackReport: (cb) => mockOn("app://modpack-report", cb),
 };
+
+import { toDownloadFinished, toDownloadProgress } from "../adapters";
+import type { RawProgressEvent, RawTaskInfo } from "../raw";
+const adaptProgress = (p: Record<string, unknown>) => toDownloadProgress(p as unknown as RawProgressEvent);
+const adaptFinished = (f: Record<string, unknown>) => toDownloadFinished(f as unknown as RawTaskInfo);

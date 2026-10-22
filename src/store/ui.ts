@@ -7,10 +7,16 @@ export type HueName = "blue" | "purple" | "green" | "orange" | "pink" | "red";
 export const DEFAULT_HUE: HueName = "blue";
 export const HUES: Record<HueName, number> = { blue: 215, purple: 265, green: 150, orange: 30, pink: 330, red: 5 };
 
+export interface ToastAction {
+  label: string;
+  /** in-app route to navigate to */
+  route: string;
+}
 export interface Toast {
   id: number;
   kind: "info" | "success" | "error";
   text: string;
+  action?: ToastAction;
 }
 
 export interface UiState {
@@ -21,7 +27,7 @@ export interface UiState {
   setMode(m: ThemeMode): void;
   setHue(h: HueName): void;
   setReduceMotion(v: boolean): void;
-  toast(text: string, kind?: Toast["kind"], ms?: number): number;
+  toast(text: string, kind?: Toast["kind"], ms?: number, action?: ToastAction): number;
   dismissToast(id: number): void;
 }
 
@@ -60,9 +66,9 @@ export const useUi = create<UiState>((set, get) => ({
   setMode: (mode) => { set({ mode }); save(get()); },
   setHue: (hue) => { set({ hue }); save(get()); },
   setReduceMotion: (reduceMotion) => { set({ reduceMotion }); save(get()); },
-  toast: (text, kind = "info", ms = 3500) => {
+  toast: (text, kind = "info", ms = 3500, action) => {
     const id = ++toastSeq;
-    set((s) => ({ toasts: [...s.toasts, { id, kind, text }] }));
+    set((s) => ({ toasts: [...s.toasts.slice(-4), { id, kind, text, action }] }));
     if (ms > 0) setTimeout(() => get().dismissToast(id), ms);
     return id;
   },

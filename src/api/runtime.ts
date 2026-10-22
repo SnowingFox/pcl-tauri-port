@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { normalizeError } from "./errors";
 
 /** True when running inside a Tauri webview. */
 export const inTauri =
@@ -13,8 +14,13 @@ export const useMockApi: boolean =
   import.meta.env.VITE_MOCK_API === "true" ||
   (import.meta.env.VITE_MOCK_API !== "false" && !inTauri);
 
-export function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  return invoke<T>(cmd, args);
+/** invoke() that always rejects with an AppError (code + readable message). */
+export async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (e) {
+    throw normalizeError(e);
+  }
 }
 
 export type Unlisten = () => void;

@@ -1,7 +1,11 @@
 export { accountsApi } from "./accounts";
+export { appApi } from "./app";
 export { launchApi } from "./launch";
+export { instancesApi } from "./instances";
 export { downloadApi } from "./download";
 export { resourcesApi } from "./resources";
 export { settingsApi } from "./settings";
+export { crashApi } from "./crash";
 export { useMockApi, inTauri } from "./runtime";
+export { AppError, describeError, normalizeError } from "./errors";
 export * from "./types";
