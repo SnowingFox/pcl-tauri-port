@@ -9,7 +9,7 @@ Derived from Plain Craft Launcher 2 (see `LICENCE`).
 
 | What | Location |
 | --- | --- |
-| Global settings | `~/Library/Application Support/PCL-Tauri/settings.json` (override dir with `PCL_DATA_DIR`) |
+| Global settings | `~/Library/Application Support/com.snowingfox.pcltauriport/settings.json` (override dir with `PCL_DATA_DIR`; the old `PCL-Tauri` dir is copied over on first start, see `app.md`) |
 | Per-instance settings | `<root>/versions/<name>/PCL/config.json` |
 
 Writes are atomic (temp file, fsync, rename). A corrupt `settings.json` is renamed to

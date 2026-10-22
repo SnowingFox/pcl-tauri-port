@@ -45,6 +45,11 @@ async fn install_and_launch(h: &mut Harness, mc: &str, loader: Option<ainstall::
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
+    let reached = markers.iter().all(|m| lines.iter().any(|l| l.contains(m)));
+    eprintln!("  markers reached: {reached}; {} game lines; exited already: {}", lines.len(), !h.names("launch://exit").is_empty());
+    if !reached {
+        eprintln!("  ---- last game output ----\n{}", lines.iter().rev().take(40).rev().cloned().collect::<Vec<_>>().join("\n"));
+    }
     let _ = crate::launch::kill_by_id(&lid);
     h.wait_event("launch://exit", 30).await;
     lines
@@ -52,7 +57,11 @@ async fn install_and_launch(h: &mut Harness, mc: &str, loader: Option<ainstall::
 
 fn real_harness() -> Option<Harness> {
     let java = java_from_env()?;
-    let mut h = Harness::new();
+    // PCL_E2E_DIR keeps the sandbox between runs (installs resume instead of starting over).
+    let mut h = match std::env::var("PCL_E2E_DIR").ok().filter(|s| !s.is_empty()) {
+        Some(d) => Harness::in_dir(std::path::PathBuf::from(d)),
+        None => Harness::new(),
+    };
     h.ctx.mgr.set_manifest_url(crate::download::manifest::MANIFEST_URL);
     let info = crate::java::inspect(std::path::Path::new(&java)).expect("PCL_E2E_JAVA must point at a java executable or home");
     eprintln!("using Java {} at {}", info.version, info.path);

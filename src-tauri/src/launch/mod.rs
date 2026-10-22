@@ -410,9 +410,31 @@ pub fn launch_kill(id: String) -> Result<(), LaunchError> {
     kill_by_id(&id)
 }
 
+/// How long a game may take to shut down after SIGTERM before it is killed outright.
+pub const KILL_GRACE: Duration = Duration::from_secs(5);
+
 pub fn kill_by_id(id: &str) -> Result<(), LaunchError> {
+    kill_with_grace(id, KILL_GRACE)
+}
+
+/// Ask the game to quit (SIGTERM); if it is still running after `grace` (a hung client, a mod
+/// ignoring the signal), kill it (SIGKILL). The later exit is reported as user-initiated.
+pub fn kill_with_grace(id: &str, grace: Duration) -> Result<(), LaunchError> {
     let pid = running().lock().unwrap().get(id).copied().ok_or_else(|| LaunchError::NotRunning(id.to_string()))?;
     killed().lock().unwrap().insert(id.to_string());
+    #[cfg(unix)]
+    {
+        let id = id.to_string();
+        std::thread::spawn(move || {
+            std::thread::sleep(grace);
+            // Same pid still registered under this launch id: the process has not been reaped yet.
+            if running().lock().unwrap().get(&id).copied() == Some(pid) {
+                let _ = Command::new("kill").arg("-KILL").arg(pid.to_string()).status();
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    let _ = grace;
     #[cfg(unix)]
     {
         let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status();

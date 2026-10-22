@@ -142,26 +142,39 @@ pub fn jar_main_class(jar: &Path) -> DlResult<String> {
         .ok_or_else(|| DlError::Other(format!("{} has no Main-Class", jar.display())))
 }
 
+/// Split profile/version libraries into files to download and paths bundled inside the installer.
+/// Each destination appears once: the installer profile and the version json list some libraries
+/// twice (e.g. fmlloader), and concurrent downloads of one path would write the same `.part` file.
+fn plan_profile_libs(libs_raw: &[Value], libdir: &Path, os: &str, arch: &str) -> DlResult<(Vec<FileSpec>, Vec<String>)> {
+    let mut files = vec![];
+    let mut bundled = vec![];
+    let mut seen = std::collections::HashSet::new();
+    for l in libs_raw {
+        let lib: crate::download::manifest::Library = serde_json::from_value(l.clone())?;
+        if let Some(a) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref())
+            && a.url.is_empty()
+        {
+            if let Some(p) = a.path.clone().or_else(|| maven_path(&lib.name))
+                && !bundled.contains(&p)
+            {
+                bundled.push(p);
+            }
+            continue;
+        }
+        for f in lib.files(os, arch) {
+            if seen.insert(f.path.clone()) {
+                files.push(FileSpec::new(f.url, libdir.join(&f.path)).with_sha1(f.sha1).with_size(f.size));
+            }
+        }
+    }
+    Ok((files, bundled))
+}
+
 /// Download libraries, extracting those without a URL from the installer's `maven/` folder.
 async fn fetch_profile_libs(ctx: &TaskCtx, libs_raw: &[Value], installer: &Path, start: f64, span: f64) -> DlResult<()> {
     let (os, arch) = host_os();
     let libdir = ctx.cfg.game_dir.join("libraries");
-    let mut files = vec![];
-    let mut bundled = vec![];
-    for l in libs_raw {
-        let lib: crate::download::manifest::Library = serde_json::from_value(l.clone())?;
-        if let Some(a) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) {
-            if a.url.is_empty() {
-                if let Some(p) = a.path.clone().or_else(|| maven_path(&lib.name)) {
-                    bundled.push(p);
-                }
-                continue;
-            }
-        }
-        for f in lib.files(os, arch) {
-            files.push(FileSpec::new(f.url, libdir.join(&f.path)).with_sha1(f.sha1).with_size(f.size));
-        }
-    }
+    let (files, bundled) = plan_profile_libs(libs_raw, &libdir, os, arch)?;
     let inst = installer.to_path_buf();
     let ld = libdir.clone();
     tokio::task::spawn_blocking(move || -> DlResult<()> {
@@ -313,6 +326,26 @@ pub async fn install_forge_like(ctx: &TaskCtx, mgr: &Arc<Manager>, fl: Flavor, m
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn libraries_listed_in_profile_and_version_are_fetched_once() {
+        let lib = |name: &str, path: &str| serde_json::json!({"name": name, "downloads": {"artifact": {"path": path, "url": format!("https://maven.example/{path}"), "sha1": "aa", "size": 3}}});
+        let bundled = serde_json::json!({"name": "net.minecraftforge:forge:1.20.1-47.4.28:client", "downloads": {"artifact": {"path": "net/minecraftforge/forge/x/forge-x-client.jar", "url": "", "sha1": "", "size": 0}}});
+        // profile libraries first, then the version json's: fmlloader shows up in both
+        let libs = vec![
+            lib("net.minecraftforge:fmlloader:1.20.1-47.4.28", "net/minecraftforge/fmlloader/1.20.1-47.4.28/fmlloader-1.20.1-47.4.28.jar"),
+            lib("net.minecraftforge:fmlearlydisplay:1.20.1-47.4.28", "net/minecraftforge/fmlearlydisplay/1.20.1-47.4.28/fmlearlydisplay-1.20.1-47.4.28.jar"),
+            bundled.clone(),
+            lib("net.minecraftforge:fmlearlydisplay:1.20.1-47.4.28", "net/minecraftforge/fmlearlydisplay/1.20.1-47.4.28/fmlearlydisplay-1.20.1-47.4.28.jar"),
+            lib("net.minecraftforge:fmlloader:1.20.1-47.4.28", "net/minecraftforge/fmlloader/1.20.1-47.4.28/fmlloader-1.20.1-47.4.28.jar"),
+            bundled,
+        ];
+        let (files, bundled) = plan_profile_libs(&libs, Path::new("/g/libraries"), "osx", "arm64").unwrap();
+        let dests: Vec<_> = files.iter().map(|f| f.dest.to_string_lossy().into_owned()).collect();
+        assert_eq!(dests.len(), 2, "{dests:?}");
+        assert!(dests.iter().any(|d| d.ends_with("fmlloader-1.20.1-47.4.28.jar")));
+        assert_eq!(bundled, vec!["net/minecraftforge/forge/x/forge-x-client.jar"]);
+    }
 
     #[test]
     fn tokens() {

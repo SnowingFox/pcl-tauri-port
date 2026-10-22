@@ -102,7 +102,7 @@ async fn java_missing_is_structured() {
     assert!(wire["message"].as_str().unwrap().contains("17"));
 
     // too old a Java is reported with what was found
-    let old = JavaInfo { major: 8, ..fake_java(h.dir.path(), "j8", "exit 0") };
+    let old = JavaInfo { major: 8, ..fake_java(h.dir(), "j8", "exit 0") };
     h.ctx.discover = Arc::new(move |_| vec![old.clone()]);
     let e = launch::launch(&h.ctx, "1.20.1", &acc, None).await.unwrap_err();
     assert_eq!((e.code, e.details.unwrap()["found"].clone()), ("JAVA_MISSING", json!([8])));
@@ -166,12 +166,31 @@ async fn kill_is_not_a_crash() {
     let _s = half_installed(&h, "1.20.1").await;
     let acc = h.offline_account("Steve");
     let id = launch::launch(&h.ctx, "1.20.1", &acc, Some("to-kill".into())).await.unwrap();
-    h.wait_event("launch://log", 5).await;
+    h.wait_game_line("Setting user", 5).await;
     crate::launch::kill_by_id(&id).unwrap();
     let exit = h.wait_event("launch://exit", 20).await;
     assert_eq!(exit["crashed"], false, "{exit}");
     assert!(exit["code"].is_null(), "terminated by a signal has no exit code: {exit}");
     assert!(exit["crash"].is_null());
+}
+
+#[tokio::test]
+async fn kill_escalates_to_sigkill_when_the_game_ignores_sigterm() {
+    let mut h = Harness::new();
+    // `trap "" TERM` makes the shell ignore SIGTERM (children inherit the ignore), like a hung client.
+    h.use_java("trap '' TERM\necho '[x] [Render thread/INFO]: Setting user: Steve'\nwhile true; do sleep 1; done");
+    let _s = half_installed(&h, "1.20.1").await;
+    let acc = h.offline_account("Steve");
+    let id = launch::launch(&h.ctx, "1.20.1", &acc, Some("stubborn".into())).await.unwrap();
+    h.wait_game_line("Setting user", 5).await; // the trap is installed before this line is printed
+    let t0 = std::time::Instant::now();
+    crate::launch::kill_with_grace(&id, std::time::Duration::from_millis(600)).unwrap();
+    let exit = h.wait_event("launch://exit", 20).await;
+    assert!(t0.elapsed() >= std::time::Duration::from_millis(500), "SIGTERM alone must not have ended it: {:?}", t0.elapsed());
+    assert!(t0.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(exit["crashed"], false, "a user kill is never a crash: {exit}");
+    assert!(crate::launch::launch_list_running().is_empty());
+    assert_eq!(crate::launch::kill_by_id(&id).unwrap_err().to_string(), format!("no such running instance: {id}"));
 }
 
 #[tokio::test]
@@ -260,7 +279,7 @@ async fn injector_download_goes_through_engine() {
     .unwrap();
     assert_eq!(std::fs::read(&dest).unwrap(), body);
     // a wrong checksum is rejected and leaves no file behind
-    let bad = h.dir.path().join("bad.jar");
+    let bad = h.dir().join("bad.jar");
     let (url, b2) = (format!("{}/a.jar", art.uri()), bad.clone());
     let e = tasks::run_task(&h.ctx.mgr, crate::download::SpawnOpts::default(), "authlib", "x", move |t| async move {
         let mut spec = crate::download::engine::FileSpec::new(url, &b2);

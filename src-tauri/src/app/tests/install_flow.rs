@@ -174,7 +174,7 @@ async fn modrinth_pack_installs_game_files_and_overrides() {
     for (p, body) in [("/a.jar", &a), ("/b.jar", &b)] {
         Mock::given(method("GET")).and(path(p)).respond_with(ResponseTemplate::new(200).set_body_bytes(body.clone())).mount(&s.server).await;
     }
-    let pack = h.dir.path().join("pack.mrpack");
+    let pack = h.dir().join("pack.mrpack");
     std::fs::write(&pack, modrinth_pack(&s.server.uri(), &[("mods/a.jar", &a), ("mods/b.jar", &b)])).unwrap();
 
     let id = amodpack::install_modpack(&h.ctx, Arc::new(FakeApi::default()), amodpack::ModpackSource::File { path: pack.to_string_lossy().into() }, "Pack Instance".into()).await.unwrap();
@@ -204,7 +204,7 @@ async fn pack_with_bad_hash_fails_and_cleans_up() {
     let s = serve_vanilla("1.20.1").await;
     h.ctx.mgr.set_manifest_url(&s.manifest_url);
     Mock::given(method("GET")).and(path("/a.jar")).respond_with(ResponseTemplate::new(200).set_body_bytes(b"tampered".to_vec())).mount(&s.server).await;
-    let pack = h.dir.path().join("pack.mrpack");
+    let pack = h.dir().join("pack.mrpack");
     std::fs::write(&pack, modrinth_pack(&s.server.uri(), &[("mods/a.jar", b"expected bytes")])).unwrap();
     let id = amodpack::install_modpack(&h.ctx, Arc::new(FakeApi::default()), amodpack::ModpackSource::File { path: pack.to_string_lossy().into() }, "Broken".into()).await.unwrap();
     let info = h.finish(&id).await;
@@ -220,7 +220,7 @@ async fn modpack_input_errors_are_typed() {
     let api: Arc<dyn ares::ResourceApi> = Arc::new(FakeApi::default());
     let src = |p: &str| amodpack::ModpackSource::File { path: p.into() };
     assert_eq!(amodpack::install_modpack(&h.ctx, api.clone(), src("/no/such.mrpack"), "X".into()).await.unwrap_err().code, "INVALID_ARGUMENT");
-    let junk = h.dir.path().join("junk.zip");
+    let junk = h.dir().join("junk.zip");
     std::fs::write(&junk, zip_of(&[("readme.txt", b"hi".to_vec())])).unwrap();
     assert_eq!(amodpack::install_modpack(&h.ctx, api.clone(), src(&junk.to_string_lossy()), "X".into()).await.unwrap_err().code, "UNSUPPORTED");
     assert_eq!(amodpack::install_modpack(&h.ctx, api.clone(), src(&junk.to_string_lossy()), "a/b".into()).await.unwrap_err().code, "INVALID_ARGUMENT");
@@ -244,7 +244,7 @@ async fn curseforge_pack_reports_restricted_files_instead_of_failing() {
         "files": [{"projectID": 1, "fileID": 10, "required": true}, {"projectID": 2, "fileID": 20, "required": true},
                   {"projectID": 3, "fileID": 30, "required": true}, {"projectID": 4, "fileID": 40, "required": true}]
     });
-    let pack = h.dir.path().join("cf.zip");
+    let pack = h.dir().join("cf.zip");
     std::fs::write(&pack, zip_of(&[("manifest.json", manifest.to_string().into_bytes()), ("overrides/options.txt", b"x".to_vec())])).unwrap();
 
     let api = FakeApi::default();

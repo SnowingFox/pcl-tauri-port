@@ -24,7 +24,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 pub type Events = Arc<Mutex<Vec<(String, Value)>>>;
 
 pub struct Harness {
-    pub dir: tempfile::TempDir,
+    /// Temp dir guard (None when an explicit directory is used, see `Harness::in_dir`).
+    guard: Option<tempfile::TempDir>,
+    dir: PathBuf,
     pub root: PathBuf,
     pub ctx: AppCtx,
     pub events: Events,
@@ -32,8 +34,20 @@ pub struct Harness {
 
 impl Harness {
     pub fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("mc");
+        let t = tempfile::tempdir().unwrap();
+        let mut h = Self::in_dir(t.path().to_path_buf());
+        h.guard = Some(t);
+        h
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Use `dir` as the whole sandbox (kept afterwards; lets slow real-network tests resume).
+    pub fn in_dir(dir: PathBuf) -> Self {
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.join("mc");
         std::fs::create_dir_all(root.join("versions")).unwrap();
         let events: Events = Arc::default();
         let ev = events.clone();
@@ -43,9 +57,9 @@ impl Harness {
         let fin: crate::download::FinishHook = Arc::new(move |i: &TaskInfo| e2("download://finished", serde_json::to_value(i).unwrap()));
         let mgr = crate::download::Manager::new(sink, fin);
         // Per-test stores; leaked because the production code holds `&'static` handles.
-        let settings: &'static SettingsStore = Box::leak(Box::new(SettingsStore::load(dir.path().join("settings.json"))));
+        let settings: &'static SettingsStore = Box::leak(Box::new(SettingsStore::load(dir.join("settings.json"))));
         let accounts: &'static AccountManager =
-            Box::leak(Box::new(AccountManager::new(dir.path().join("accounts"), Arc::new(MemoryStore::default())).unwrap()));
+            Box::leak(Box::new(AccountManager::new(dir.join("accounts"), Arc::new(MemoryStore::default())).unwrap()));
         let root_s = root.to_string_lossy().into_owned();
         settings
             .update(|g| {
@@ -60,8 +74,8 @@ impl Harness {
         let mut ctx = AppCtx::new(mgr, emit);
         ctx.settings = settings;
         ctx.accounts = Some(accounts);
-        ctx.data_dir = dir.path().join("data");
-        Self { dir, root, ctx, events }
+        ctx.data_dir = dir.join("data");
+        Self { guard: None, dir, root, ctx, events }
     }
 
     pub fn names(&self, event: &str) -> Vec<Value> {
@@ -82,7 +96,7 @@ impl Harness {
     /// Swap in an account store that holds one Microsoft account whose refresh token is gone
     /// (what a cleared keychain or an expired login looks like). Returns its id.
     pub fn add_expired_ms_account(&mut self) -> String {
-        let dir = self.dir.path().join("accounts-expired");
+        let dir = self.dir.join("accounts-expired");
         let id = "ms-expired-1";
         let doc = json!({
             "version": 1, "selected": null, "settings": {"ms_client_id": "test-client"},
@@ -96,13 +110,26 @@ impl Harness {
         id.into()
     }
 
+    /// Wait until the game printed a line containing `needle` (the launcher header does not count).
+    pub async fn wait_game_line(&self, needle: &str, secs: u64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        loop {
+            let seen = self.names("launch://log").iter().any(|e| e["stream"] != "launcher" && e["line"].as_str().is_some_and(|l| l.contains(needle)));
+            if seen {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "game never printed {needle:?}");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
     pub fn offline_account(&self, name: &str) -> String {
         self.ctx.accounts().unwrap().add_offline(name).unwrap().id
     }
 
     /// Install a fake Java that satisfies any requirement.
     pub fn use_java(&mut self, script: &str) -> JavaInfo {
-        let j = fake_java(self.dir.path(), "fakejdk", script);
+        let j = fake_java(&self.dir, "fakejdk", script);
         let jj = j.clone();
         self.ctx.discover = Arc::new(move |_| vec![jj.clone()]);
         j
@@ -236,6 +263,6 @@ fn harness_selfcheck() {
     let h = Harness::new();
     assert!(h.root.join("versions").is_dir());
     assert_eq!(h.ctx.mgr.cfg().game_dir, h.root, "settings were wired into the download manager");
-    let j = fake_java(h.dir.path(), "j", "exit 0");
+    let j = fake_java(h.dir(), "j", "exit 0");
     assert_eq!(j.major, 21);
 }
