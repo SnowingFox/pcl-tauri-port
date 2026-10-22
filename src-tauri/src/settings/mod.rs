@@ -14,4 +14,3 @@ pub mod store;
 
 pub use instance_settings::InstanceSettings;
 pub use model::*;
-

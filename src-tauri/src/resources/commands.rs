@@ -1,7 +1,7 @@
 //! Tauri commands for resource platforms and local mods. See docs/api/resources.md.
 use super::local_mods::{self, LocalMod, ModUpdate};
 use super::types::*;
-use super::{curseforge, modrinth, Result};
+use super::{Result, curseforge, modrinth};
 use crate::settings::guard;
 use std::path::{Path, PathBuf};
 
@@ -48,9 +48,7 @@ pub async fn curseforge_download_url(mod_id: String, file_id: u64, file_name: St
 #[tauri::command]
 pub async fn local_mods_scan(mods_dir: String) -> Result<Vec<LocalMod>> {
     let dir = checked(&mods_dir)?;
-    tauri::async_runtime::spawn_blocking(move || local_mods::scan_mods_dir(&dir))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || local_mods::scan_mods_dir(&dir)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

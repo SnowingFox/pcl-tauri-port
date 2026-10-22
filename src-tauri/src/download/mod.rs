@@ -111,7 +111,8 @@ impl TaskCtx {
 /// public hosts may be fetched (no `file:`, loopback, link-local metadata endpoints, LAN).
 fn check_spec_urls(spec: &FileSpec) -> DlResult<()> {
     for u in &spec.urls {
-        crate::settings::guard::check_remote_url(u, crate::settings::guard::HostPolicy::Public).map_err(|e| DlError::Other(format!("{e}: {u}")))?;
+        crate::settings::guard::check_remote_url(u, crate::settings::guard::HostPolicy::Public)
+            .map_err(|e| DlError::Other(format!("{e}: {u}")))?;
     }
     Ok(())
 }
@@ -270,9 +271,10 @@ impl Manager {
         let mut g = self.manifest_cache.lock().await;
         if !force
             && let Some((t, m)) = g.as_ref()
-                && t.elapsed().as_secs() < 300 {
-                    return Ok(m.clone());
-                }
+            && t.elapsed().as_secs() < 300
+        {
+            return Ok(m.clone());
+        }
         let cfg = self.cfg();
         let cache_file = cfg.game_dir.join("launcher_version_manifest_cache.json");
         let parsed = match fetch_bytes(&self.client, cfg.source, manifest::MANIFEST_URL).await {
@@ -364,12 +366,26 @@ mod guard_tests {
         assert!(ok("https://cdn.modrinth.com/a.jar", root.join("mods/a.jar")).is_ok());
         assert!(ok("https://cdn.modrinth.com/a.jar", root.join("versions/1.20.1/mods/a.jar")).is_ok());
         // Destinations that would be code or launcher state.
-        for bad in ["/etc/cron.d/x", "versions/1.20.1/1.20.1.json", "libraries/x.jar", "launcher_profiles.json", "mods/../versions/1.20.1/1.20.1.json", "mods"] {
+        for bad in [
+            "/etc/cron.d/x",
+            "versions/1.20.1/1.20.1.json",
+            "libraries/x.jar",
+            "launcher_profiles.json",
+            "mods/../versions/1.20.1/1.20.1.json",
+            "mods",
+        ] {
             let dest = if bad.starts_with('/') { PathBuf::from(bad) } else { root.join(bad) };
             assert!(ok("https://cdn.modrinth.com/a.jar", dest).is_err(), "{bad}");
         }
         // URLs: https + public host only.
-        for bad in ["http://cdn.modrinth.com/a.jar", "file:///etc/passwd", "https://127.0.0.1/a.jar", "https://169.254.169.254/x", "ftp://x/a", "https://u:p@cdn.modrinth.com/a.jar"] {
+        for bad in [
+            "http://cdn.modrinth.com/a.jar",
+            "file:///etc/passwd",
+            "https://127.0.0.1/a.jar",
+            "https://169.254.169.254/x",
+            "ftp://x/a",
+            "https://u:p@cdn.modrinth.com/a.jar",
+        ] {
             assert!(ok(bad, root.join("mods/a.jar")).is_err(), "{bad}");
         }
         // sha1 shape.
@@ -383,16 +399,22 @@ mod guard_tests {
     #[tokio::test]
     async fn a_panicking_task_is_reported_as_failed() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let m = Manager::new(Arc::new(|_| {}), Arc::new(move |i: &TaskInfo| {
-            let _ = tx.send(i.clone());
-        }));
+        let m = Manager::new(
+            Arc::new(|_| {}),
+            Arc::new(move |i: &TaskInfo| {
+                let _ = tx.send(i.clone());
+            }),
+        );
         let id = m.spawn("test", "boom", |_ctx| async move {
             if true {
                 panic!("boom");
             }
             Ok(())
         });
-        let done = tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(5))).await.unwrap().expect("finish hook not called");
+        let done = tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(5)))
+            .await
+            .unwrap()
+            .expect("finish hook not called");
         assert_eq!(done.task_id, id);
         assert!(matches!(done.status, TaskStatus::Failed));
         assert!(done.error.unwrap().contains("panicked"));
@@ -405,7 +427,8 @@ mod guard_tests {
         let root = d.path().join("mc");
         std::fs::create_dir_all(&root).unwrap();
         let roots = vec![root.clone()];
-        let cfg = |dir: PathBuf| DownloadConfig { game_dir: dir, concurrency: 10_000, segments: 0, retries: 999, ..DownloadConfig::default() };
+        let cfg =
+            |dir: PathBuf| DownloadConfig { game_dir: dir, concurrency: 10_000, segments: 0, retries: 999, ..DownloadConfig::default() };
         let c = sanitize_config(cfg(root.clone()), &roots).unwrap();
         assert_eq!((c.concurrency, c.segments, c.retries), (64, 1, 10));
         assert!(sanitize_config(cfg(PathBuf::from("/")), &roots).is_err());
@@ -437,9 +460,10 @@ pub(crate) fn check_file_request(req: &FileRequest, roots: &[PathBuf]) -> Result
         return Err("目标不能是符号链接".into());
     }
     if let Some(h) = req.sha1.as_deref().filter(|h| !h.is_empty())
-        && (h.len() != 40 || !h.chars().all(|c| c.is_ascii_hexdigit())) {
-            return Err("sha1 格式无效".into());
-        }
+        && (h.len() != 40 || !h.chars().all(|c| c.is_ascii_hexdigit()))
+    {
+        return Err("sha1 格式无效".into());
+    }
     Ok(dest)
 }
 

@@ -12,9 +12,14 @@ pub fn parse(text: &str, base: &str) -> Result<ModpackInstallPlan, String> {
         if id.contains("recommended") {
             return Err("this modpack is too old (uses 'recommended' loader versions) and is unsupported".into());
         }
-        let parsed = [("forge-", ModLoader::Forge), ("neoforge-", ModLoader::NeoForge), ("fabric-", ModLoader::Fabric), ("quilt-", ModLoader::Quilt)]
-            .into_iter()
-            .find_map(|(p, ml)| id.strip_prefix(p).map(|ver| LoaderSpec { loader: ml, version: ver.to_string() }));
+        let parsed = [
+            ("forge-", ModLoader::Forge),
+            ("neoforge-", ModLoader::NeoForge),
+            ("fabric-", ModLoader::Fabric),
+            ("quilt-", ModLoader::Quilt),
+        ]
+        .into_iter()
+        .find_map(|(p, ml)| id.strip_prefix(p).map(|ver| LoaderSpec { loader: ml, version: ver.to_string() }));
         match parsed {
             Some(s) => loaders.push(s),
             None => warnings.push(format!("unsupported loader: {id}")),
@@ -72,13 +77,15 @@ pub async fn resolve(plan: &mut ModpackInstallPlan) -> Result<Vec<CurseForgeRef>
 }
 
 pub fn apply_resolved(plan: &mut ModpackInstallPlan, found: Vec<ResourceFile>) -> Vec<CurseForgeRef> {
-    let by_id: std::collections::HashMap<u64, &ResourceFile> =
-        found.iter().filter_map(|f| f.id.parse().ok().map(|i| (i, f))).collect();
+    let by_id: std::collections::HashMap<u64, &ResourceFile> = found.iter().filter_map(|f| f.id.parse().ok().map(|i| (i, f))).collect();
     let mut missing = vec![];
     let mut seen = std::collections::HashSet::new();
     let mut kept = vec![];
     for mut pf in std::mem::take(&mut plan.files) {
-        let Some(r) = pf.curseforge.clone() else { kept.push(pf); continue };
+        let Some(r) = pf.curseforge.clone() else {
+            kept.push(pf);
+            continue;
+        };
         if !seen.insert(r.file_id) {
             continue; // CurseForge sometimes lists duplicates
         }
@@ -110,9 +117,23 @@ mod tests {
       "name":"CF Pack","version":"3","overrides":"overrides","files":[{"projectID":1,"fileID":10,"required":true},{"projectID":2,"fileID":20,"required":false},{"projectID":3,"fileID":30},{"projectID":9}]}"#;
 
     fn rf(id: u64, name: &str) -> ResourceFile {
-        ResourceFile { platform: Platform::CurseForge, id: id.to_string(), project_id: "1".into(), name: name.into(), file_name: name.into(),
-            version_number: None, release_type: "release".into(), game_versions: vec![], loaders: vec![], sha1: Some("h".into()), size: 5,
-            download_urls: vec![], date_published: String::new(), dependencies: vec![], fingerprint: None }
+        ResourceFile {
+            platform: Platform::CurseForge,
+            id: id.to_string(),
+            project_id: "1".into(),
+            name: name.into(),
+            file_name: name.into(),
+            version_number: None,
+            release_type: "release".into(),
+            game_versions: vec![],
+            loaders: vec![],
+            sha1: Some("h".into()),
+            size: 5,
+            download_urls: vec![],
+            date_published: String::new(),
+            dependencies: vec![],
+            fingerprint: None,
+        }
     }
 
     #[test]

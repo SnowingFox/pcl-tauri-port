@@ -20,9 +20,7 @@ fn check_archive(archive: &str) -> Result<PathBuf, String> {
 #[tauri::command]
 pub async fn modpack_parse(archive: String) -> Result<ModpackInstallPlan, String> {
     let archive = check_archive(&archive)?;
-    tauri::async_runtime::spawn_blocking(move || parse_pack(&archive))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || parse_pack(&archive)).await.map_err(|e| e.to_string())?
 }
 
 /// Resolve CurseForge file references (needs PCL_CURSEFORGE_KEY). Returns the updated plan and
@@ -41,7 +39,5 @@ pub async fn modpack_extract_overrides(archive: String, plan: ModpackInstallPlan
     plan.validate()?;
     // Only `<registered root>/versions/<name>` may receive files.
     let instance_dir = guard::confine_instance_dir(&guard::registered_roots(), Path::new(&instance_dir))?;
-    tauri::async_runtime::spawn_blocking(move || extract_overrides(&archive, &plan, &instance_dir))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || extract_overrides(&archive, &plan, &instance_dir)).await.map_err(|e| e.to_string())?
 }

@@ -188,12 +188,9 @@ fn list_names(dir: &Path, only_ext: Option<&[&str]>) -> Vec<String> {
         .filter_map(|e| e.ok())
         .filter(|e| match only_ext {
             None => true,
-            Some(exts) => e
-                .path()
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(|x| exts.iter().any(|w| w.eq_ignore_ascii_case(x)))
-                .unwrap_or(false),
+            Some(exts) => {
+                e.path().extension().and_then(|x| x.to_str()).map(|x| exts.iter().any(|w| w.eq_ignore_ascii_case(x))).unwrap_or(false)
+            }
         })
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|n| !n.starts_with('.'))
@@ -226,10 +223,7 @@ pub fn export_info(root: &Path, name: &str, iso: IsolationMode) -> Result<Export
         shader_packs: list_names(&game.join("shaderpacks"), None),
         saves: list_names(&game.join("saves"), None),
         total_size_bytes: dir_size(&dir),
-        exported_at_unix: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        exported_at_unix: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
         instance: info,
         settings,
     })

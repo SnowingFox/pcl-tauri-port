@@ -5,7 +5,7 @@ use crate::download::engine::FileSpec;
 use crate::download::error::{DlError, DlResult};
 use crate::download::manifest::VersionJson;
 use crate::download::mirror::Source;
-use crate::download::{fetch_bytes, Manager, TaskCtx};
+use crate::download::{Manager, TaskCtx, fetch_bytes};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -116,12 +116,19 @@ pub fn parse_neoforge_list(bytes: &[u8], mc: &str) -> DlResult<Vec<LoaderVersion
 pub async fn list_loader_versions(m: &Manager, loader: &str, mc: &str) -> DlResult<Vec<LoaderVersion>> {
     let src = m.cfg().source;
     match loader {
-        "fabric" => parse_profile_loader_list(&fetch_bytes(&m.client, src, &format!("{}/versions/loader/{mc}", ProfileLoader::Fabric.meta())).await?),
-        "quilt" => parse_profile_loader_list(&fetch_bytes(&m.client, src, &format!("{}/versions/loader/{mc}", ProfileLoader::Quilt.meta())).await?),
+        "fabric" => parse_profile_loader_list(
+            &fetch_bytes(&m.client, src, &format!("{}/versions/loader/{mc}", ProfileLoader::Fabric.meta())).await?,
+        ),
+        "quilt" => {
+            parse_profile_loader_list(&fetch_bytes(&m.client, src, &format!("{}/versions/loader/{mc}", ProfileLoader::Quilt.meta())).await?)
+        }
         // Forge has no official list API; BMCLAPI is the only JSON source, used regardless of the mirror setting.
-        "forge" => parse_forge_list(&fetch_bytes(&m.client, Source::Official, &format!("https://bmclapi2.bangbang93.com/forge/minecraft/{mc}")).await?),
+        "forge" => parse_forge_list(
+            &fetch_bytes(&m.client, Source::Official, &format!("https://bmclapi2.bangbang93.com/forge/minecraft/{mc}")).await?,
+        ),
         "neoforge" => parse_neoforge_list(
-            &fetch_bytes(&m.client, Source::Official, "https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge").await?,
+            &fetch_bytes(&m.client, Source::Official, "https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge")
+                .await?,
             mc,
         ),
         other => Err(DlError::Other(format!("unknown loader {other}"))),
@@ -167,7 +174,10 @@ mod tests {
 
     #[test]
     fn lists() {
-        let l = parse_profile_loader_list(br#"[{"loader":{"version":"0.15.1","stable":true}},{"loader":{"version":"0.15.0-beta","stable":false}}]"#).unwrap();
+        let l = parse_profile_loader_list(
+            br#"[{"loader":{"version":"0.15.1","stable":true}},{"loader":{"version":"0.15.0-beta","stable":false}}]"#,
+        )
+        .unwrap();
         assert_eq!(l.len(), 2);
         assert_eq!(l[0].version, "0.15.1");
         let f = parse_forge_list(br#"[{"version":"47.1.0","build":10},{"version":"47.2.0","build":20}]"#).unwrap();

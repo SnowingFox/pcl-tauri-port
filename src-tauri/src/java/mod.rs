@@ -26,11 +26,7 @@ pub fn parse_major(version: &str) -> Option<u32> {
     let v = version.trim().trim_matches('"');
     let mut parts = v.split(['.', '_', '-', '+']);
     let first: u32 = parts.next()?.parse().ok()?;
-    if first == 1 {
-        parts.next()?.parse().ok()
-    } else {
-        Some(first)
-    }
+    if first == 1 { parts.next()?.parse().ok() } else { Some(first) }
 }
 
 /// Extract the quoted version from `java -version` output.
@@ -69,13 +65,15 @@ pub fn binary_arch(path: &Path) -> Option<String> {
     let be = |o: usize| u32::from_be_bytes(buf[o..o + 4].try_into().unwrap());
     let le = |o: usize| u32::from_le_bytes(buf[o..o + 4].try_into().unwrap());
     match &buf[0..4] {
-        [0xCF, 0xFA, 0xED, 0xFE] | [0xCE, 0xFA, 0xED, 0xFE] => Some(match le(4) {
-            0x0100000C => "arm64",
-            0x01000007 => "x64",
-            7 => "x86",
-            _ => "unknown",
-        }
-        .into()),
+        [0xCF, 0xFA, 0xED, 0xFE] | [0xCE, 0xFA, 0xED, 0xFE] => Some(
+            match le(4) {
+                0x0100000C => "arm64",
+                0x01000007 => "x64",
+                7 => "x86",
+                _ => "unknown",
+            }
+            .into(),
+        ),
         // Fat/universal: report native arch if present, else first slice.
         [0xCA, 0xFE, 0xBA, 0xBE] => {
             let n = be(4).min(4) as usize;
@@ -97,13 +95,15 @@ pub fn binary_arch(path: &Path) -> Option<String> {
             let native = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
             Some(if archs.contains(&native) { native } else { archs[0] }.into())
         }
-        [0x7F, b'E', b'L', b'F'] => Some(match u16::from_le_bytes([buf[18], buf[19]]) {
-            0xB7 => "arm64",
-            0x3E => "x64",
-            0x03 => "x86",
-            _ => "unknown",
-        }
-        .into()),
+        [0x7F, b'E', b'L', b'F'] => Some(
+            match u16::from_le_bytes([buf[18], buf[19]]) {
+                0xB7 => "arm64",
+                0x3E => "x64",
+                0x03 => "x86",
+                _ => "unknown",
+            }
+            .into(),
+        ),
         _ => None,
     }
 }
@@ -174,9 +174,10 @@ pub fn inspect(path: &Path) -> Option<JavaInfo> {
     let mut vendor = release_value(&release, "IMPLEMENTOR").unwrap_or_default();
     let mut arch = release_value(&release, "OS_ARCH").map(|a| normalize_arch(&a));
     if let Some(a) = binary_arch(&exe)
-        && a != "unknown" {
-            arch = Some(a);
-        }
+        && a != "unknown"
+    {
+        arch = Some(a);
+    }
     if version.is_none() {
         // The macOS /usr/bin/java stub may pop an installer dialog; callers filter it out.
         let out = Command::new(&exe).arg("-version").output().ok()?;
@@ -211,9 +212,7 @@ pub fn parse_java_home_v(out: &str) -> Vec<PathBuf> {
 }
 
 fn children(dir: &Path) -> Vec<PathBuf> {
-    std::fs::read_dir(dir)
-        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
-        .unwrap_or_default()
+    std::fs::read_dir(dir).map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect()).unwrap_or_default()
 }
 
 /// Candidate java homes from well-known locations. `extra_dirs` may hold the
@@ -344,7 +343,15 @@ mod tests {
     use super::*;
 
     fn j(major: u32, arch: &str) -> JavaInfo {
-        JavaInfo { path: format!("/j{major}{arch}/bin/java"), home: "/x".into(), version: major.to_string(), major, arch: arch.into(), vendor: "".into(), is_jdk: true }
+        JavaInfo {
+            path: format!("/j{major}{arch}/bin/java"),
+            home: "/x".into(),
+            version: major.to_string(),
+            major,
+            arch: arch.into(),
+            vendor: "".into(),
+            is_jdk: true,
+        }
     }
 
     #[test]

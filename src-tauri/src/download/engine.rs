@@ -3,8 +3,8 @@
 //! Concept ported from PCL's ModNet.vb (multi-thread downloader); implementation is original.
 
 use super::error::{DlError, DlResult};
-use super::hash::{file_hash, HashKind};
-use super::mirror::{candidates, Source};
+use super::hash::{HashKind, file_hash};
+use super::mirror::{Source, candidates};
 use super::segment::plan_segments;
 use futures_util::StreamExt;
 use serde::Serialize;
@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::{Semaphore, watch};
 
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
@@ -251,9 +251,10 @@ pub async fn is_valid(spec: &FileSpec) -> bool {
         return false;
     }
     if let Some(sz) = spec.size
-        && meta.len() != sz {
-            return false;
-        }
+        && meta.len() != sz
+    {
+        return false;
+    }
     if let Some(h) = &spec.sha1 {
         return file_hash(HashKind::Sha1, spec.dest.clone()).await.map(|a| a.eq_ignore_ascii_case(h)).unwrap_or(false);
     }
@@ -267,9 +268,10 @@ pub async fn is_valid(spec: &FileSpec) -> bool {
 async fn verify(spec: &FileSpec, path: &Path) -> DlResult<()> {
     let meta = tokio::fs::metadata(path).await?;
     if let Some(sz) = spec.size
-        && meta.len() != sz {
-            return Err(DlError::Size { path: path.display().to_string(), expected: sz, actual: meta.len() });
-        }
+        && meta.len() != sz
+    {
+        return Err(DlError::Size { path: path.display().to_string(), expected: sz, actual: meta.len() });
+    }
     for (kind, exp) in [(HashKind::Sha1, &spec.sha1), (HashKind::Sha256, &spec.sha256)] {
         if let Some(exp) = exp {
             let act = file_hash(kind, path.to_path_buf()).await?;
@@ -325,9 +327,12 @@ pub async fn download_file(
                     last_err = e;
                     // 4xx other than 408/429 will not get better on retry.
                     if let DlError::Status(c, _) = &last_err
-                        && (400..500).contains(c) && *c != 408 && *c != 429 {
-                            break;
-                        }
+                        && (400..500).contains(c)
+                        && *c != 408
+                        && *c != 429
+                    {
+                        break;
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(200 * (1 << attempt.min(5)))).await;
                 }
             }
@@ -375,11 +380,7 @@ async fn try_once(
 }
 
 async fn check_status(resp: reqwest::Response, url: &str) -> DlResult<reqwest::Response> {
-    if resp.status().is_success() {
-        Ok(resp)
-    } else {
-        Err(DlError::Status(resp.status().as_u16(), url.to_string()))
-    }
+    if resp.status().is_success() { Ok(resp) } else { Err(DlError::Status(resp.status().as_u16(), url.to_string())) }
 }
 
 /// One connection; resumes from an existing `.part` via Range when possible.
@@ -394,9 +395,10 @@ async fn single(
 ) -> DlResult<()> {
     let mut existing = tokio::fs::metadata(part).await.map(|m| m.len()).unwrap_or(0);
     if let Some(sz) = spec.size
-        && existing > sz {
-            existing = 0;
-        }
+        && existing > sz
+    {
+        existing = 0;
+    }
     let mut req = client.get(url);
     if existing > 0 {
         req = req.header("Range", format!("bytes={existing}-"));

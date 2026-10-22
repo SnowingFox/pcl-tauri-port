@@ -224,9 +224,10 @@ pub fn detect_mc_version(json: &Value, dir_name: &str) -> Option<String> {
             if let Some((g, a, v)) = coord(name) {
                 if ((g == "net.minecraftforge" && (a == "forge" || a == "fmlloader")) || (g == "optifine" && a == "OptiFine"))
                     && let Some(mc) = v.split(['-', '_']).next()
-                        && rel.is_match(mc) {
-                            return Some(mc.into());
-                        }
+                    && rel.is_match(mc)
+                {
+                    return Some(mc.into());
+                }
                 if g == "net.minecraft" && a == "client" {
                     return Some(v.into());
                 }

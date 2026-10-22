@@ -1,7 +1,7 @@
 //! Tauri command surface. See docs/api/accounts.md.
 use super::manager::AccountManager;
 use super::secrets::KeychainStore;
-use super::{yggdrasil, AccountError, AccountInfo, SessionSummary};
+use super::{AccountError, AccountInfo, SessionSummary, yggdrasil};
 use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 

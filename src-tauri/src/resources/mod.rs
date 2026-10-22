@@ -13,15 +13,10 @@ use serde_json::Value;
 
 pub type Result<T> = std::result::Result<T, String>;
 
-pub const USER_AGENT: &str =
-    "SnowingFox/pcl-tauri-port/0.1.0 (+https://github.com/SnowingFox/pcl-tauri-port)";
+pub const USER_AGENT: &str = "SnowingFox/pcl-tauri-port/0.1.0 (+https://github.com/SnowingFox/pcl-tauri-port)";
 
 pub fn http_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| e.to_string())
+    reqwest::Client::builder().user_agent(USER_AGENT).timeout(std::time::Duration::from_secs(30)).build().map_err(|e| e.to_string())
 }
 
 /// Percent-encode a URL query component.
@@ -55,8 +50,5 @@ pub(crate) fn u(v: &Value, k: &str) -> u64 {
     v.get(k).and_then(Value::as_u64).unwrap_or(0)
 }
 pub(crate) fn str_list(v: &Value, k: &str) -> Vec<String> {
-    v.get(k)
-        .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
-        .unwrap_or_default()
+    v.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
 }

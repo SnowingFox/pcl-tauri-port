@@ -31,7 +31,8 @@ pub fn parse(text: &str, _base: &str) -> Result<ModpackInstallPlan, String> {
         let path = f["path"].as_str().ok_or("file entry without path")?.to_string();
         // validate now so a malicious pack fails at planning time
         safe_join(Path::new("/"), &path)?;
-        let urls: Vec<String> = f["downloads"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        let urls: Vec<String> =
+            f["downloads"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
         for u in &urls {
             crate::settings::guard::check_download_url(u).map_err(|e| format!("{path}: {e}"))?;
         }
@@ -78,7 +79,13 @@ mod tests {
 
     #[test]
     fn rejects_hostile_download_urls() {
-        for bad in ["file:///etc/passwd", "http://cdn.modrinth.com/a.jar", "https://127.0.0.1/a.jar", "https://169.254.169.254/latest/meta-data", "https://user:pw@evil.example/a.jar"] {
+        for bad in [
+            "file:///etc/passwd",
+            "http://cdn.modrinth.com/a.jar",
+            "https://127.0.0.1/a.jar",
+            "https://169.254.169.254/latest/meta-data",
+            "https://user:pw@evil.example/a.jar",
+        ] {
             let idx = IDX.replacen("https://cdn.modrinth.com/a.jar", bad, 1);
             assert!(parse(&idx, "").is_err(), "{bad}");
         }
@@ -92,7 +99,12 @@ mod tests {
 
     #[test]
     fn end_to_end_zip_and_overrides() {
-        let zip = build_zip(&[("modrinth.index.json", IDX), ("overrides/config/x.toml", "k=1"), ("client-overrides/options.txt", "o"), ("overrides/../evil.txt", "e")]);
+        let zip = build_zip(&[
+            ("modrinth.index.json", IDX),
+            ("overrides/config/x.toml", "k=1"),
+            ("client-overrides/options.txt", "o"),
+            ("overrides/../evil.txt", "e"),
+        ]);
         let dir = std::env::temp_dir().join(format!("pcl-mrpack-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

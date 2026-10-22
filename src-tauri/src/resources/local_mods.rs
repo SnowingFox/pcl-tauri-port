@@ -1,7 +1,7 @@
 //! Local mod scanning, metadata parsing, enable/disable and update checks.
 use super::hash::{curseforge_fingerprint, sha1_hex};
 use super::types::*;
-use super::{modrinth, Result};
+use super::{Result, modrinth};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{Read, Seek};
@@ -40,13 +40,7 @@ fn jstr(v: &Value, k: &str) -> Option<String> {
 }
 
 fn authors_from(v: &Value) -> Vec<String> {
-    v.as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str().map(str::to_string).or_else(|| jstr(x, "name")))
-                .collect()
-        })
-        .unwrap_or_default()
+    v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string).or_else(|| jstr(x, "name"))).collect()).unwrap_or_default()
 }
 
 pub fn parse_fabric_json(text: &str) -> Option<ModMeta> {
@@ -84,13 +78,7 @@ pub fn parse_mods_toml(text: &str, loader: ModLoader, manifest_version: Option<&
     let t: toml::Table = toml::from_str(text).ok()?;
     let m = t.get("mods")?.as_array()?.first()?.as_table()?;
     let get = |k: &str| m.get(k).and_then(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty());
-    let version = get("version").map(|v| {
-        if v.contains("${file.jarVersion}") {
-            manifest_version.unwrap_or("").to_string()
-        } else {
-            v
-        }
-    });
+    let version = get("version").map(|v| if v.contains("${file.jarVersion}") { manifest_version.unwrap_or("").to_string() } else { v });
     let authors = get("authors")
         .or_else(|| t.get("authors").and_then(|x| x.as_str()).map(str::to_string))
         .map(|a| a.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
@@ -112,11 +100,7 @@ pub fn parse_mcmod_info(text: &str) -> Option<ModMeta> {
         Value::Object(_) => v.get("modList").and_then(|l| l.get(0)).unwrap_or(&v),
         _ => return None,
     };
-    let authors = if first.get("authorList").is_some() {
-        authors_from(&first["authorList"])
-    } else {
-        authors_from(&first["authors"])
-    };
+    let authors = if first.get("authorList").is_some() { authors_from(&first["authorList"]) } else { authors_from(&first["authors"]) };
     Some(ModMeta {
         mod_id: jstr(first, "modid"),
         name: jstr(first, "name"),
@@ -137,29 +121,32 @@ pub fn parse_jar_meta(bytes: &[u8]) -> ModMeta {
         Ok(z) => z,
         Err(_) => return ModMeta::default(),
     };
-    let text = |z: &mut zip::ZipArchive<_>, n: &str| read_entry(z, n).map(|b| String::from_utf8_lossy(&b).trim_start_matches('\u{feff}').to_string());
+    let text = |z: &mut zip::ZipArchive<_>, n: &str| {
+        read_entry(z, n).map(|b| String::from_utf8_lossy(&b).trim_start_matches('\u{feff}').to_string())
+    };
     if let Some(t) = text(&mut z, "fabric.mod.json")
-        && let Some(m) = parse_fabric_json(&t) {
-            return m;
-        }
+        && let Some(m) = parse_fabric_json(&t)
+    {
+        return m;
+    }
     if let Some(t) = text(&mut z, "quilt.mod.json")
-        && let Some(m) = parse_quilt_json(&t) {
+        && let Some(m) = parse_quilt_json(&t)
+    {
+        return m;
+    }
+    let mf = text(&mut z, "META-INF/MANIFEST.MF").and_then(|t| manifest_version(&t));
+    for (path, loader) in [("META-INF/neoforge.mods.toml", ModLoader::NeoForge), ("META-INF/mods.toml", ModLoader::Forge)] {
+        if let Some(t) = text(&mut z, path)
+            && let Some(m) = parse_mods_toml(&t, loader, mf.as_deref())
+        {
             return m;
         }
-    let mf = text(&mut z, "META-INF/MANIFEST.MF").and_then(|t| manifest_version(&t));
-    for (path, loader) in [
-        ("META-INF/neoforge.mods.toml", ModLoader::NeoForge),
-        ("META-INF/mods.toml", ModLoader::Forge),
-    ] {
-        if let Some(t) = text(&mut z, path)
-            && let Some(m) = parse_mods_toml(&t, loader, mf.as_deref()) {
-                return m;
-            }
     }
     if let Some(t) = text(&mut z, "mcmod.info")
-        && let Some(m) = parse_mcmod_info(&t) {
-            return m;
-        }
+        && let Some(m) = parse_mcmod_info(&t)
+    {
+        return m;
+    }
     ModMeta::default()
 }
 
@@ -264,12 +251,7 @@ pub fn compute_updates(
             if new.date_published <= cur.date_published {
                 return None;
             }
-            Some(ModUpdate {
-                path: m.path.clone(),
-                current_sha1: m.sha1.clone(),
-                project_id: new.project_id.clone(),
-                latest: new.clone(),
-            })
+            Some(ModUpdate { path: m.path.clone(), current_sha1: m.sha1.clone(), project_id: new.project_id.clone(), latest: new.clone() })
         })
         .collect()
 }
@@ -292,7 +274,10 @@ mod tests {
 
     #[test]
     fn fabric() {
-        let jar = build_jar(&[("fabric.mod.json", r#"{"id":"sodium","name":"Sodium","version":"0.5.0","authors":["jelly",{"name":"x"}],"description":"fast"}"#)]);
+        let jar = build_jar(&[(
+            "fabric.mod.json",
+            r#"{"id":"sodium","name":"Sodium","version":"0.5.0","authors":["jelly",{"name":"x"}],"description":"fast"}"#,
+        )]);
         let m = parse_jar_meta(&jar);
         assert_eq!(m.mod_id.as_deref(), Some("sodium"));
         assert_eq!(m.authors, vec!["jelly", "x"]);
@@ -301,7 +286,10 @@ mod tests {
 
     #[test]
     fn quilt() {
-        let jar = build_jar(&[("quilt.mod.json", r#"{"quilt_loader":{"id":"qm","version":"1.0","metadata":{"name":"QM","contributors":{"Alice":"Owner"}}}}"#)]);
+        let jar = build_jar(&[(
+            "quilt.mod.json",
+            r#"{"quilt_loader":{"id":"qm","version":"1.0","metadata":{"name":"QM","contributors":{"Alice":"Owner"}}}}"#,
+        )]);
         let m = parse_jar_meta(&jar);
         assert_eq!((m.mod_id.as_deref(), m.authors.as_slice()), (Some("qm"), &["Alice".to_string()][..]));
         assert_eq!(m.loaders, vec![ModLoader::Quilt]);
@@ -310,7 +298,10 @@ mod tests {
     #[test]
     fn forge_toml_with_manifest_version() {
         let jar = build_jar(&[
-            ("META-INF/mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"jei\"\nversion=\"${file.jarVersion}\"\ndisplayName=\"JEI\"\nauthors=\"mezz, other\"\n"),
+            (
+                "META-INF/mods.toml",
+                "modLoader=\"javafml\"\n[[mods]]\nmodId=\"jei\"\nversion=\"${file.jarVersion}\"\ndisplayName=\"JEI\"\nauthors=\"mezz, other\"\n",
+            ),
             ("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\nImplementation-Version: 15.2.0\n"),
         ]);
         let m = parse_jar_meta(&jar);
@@ -367,12 +358,31 @@ mod tests {
     #[test]
     fn update_computation() {
         let mk = |sha: &str, date: &str, url: bool| ResourceFile {
-            platform: Platform::Modrinth, id: "v".into(), project_id: "p".into(), name: "".into(), file_name: "".into(),
-            version_number: None, release_type: "release".into(), game_versions: vec![], loaders: vec![],
-            sha1: Some(sha.into()), size: 0, download_urls: if url { vec!["u".into()] } else { vec![] },
-            date_published: date.into(), dependencies: vec![], fingerprint: None,
+            platform: Platform::Modrinth,
+            id: "v".into(),
+            project_id: "p".into(),
+            name: "".into(),
+            file_name: "".into(),
+            version_number: None,
+            release_type: "release".into(),
+            game_versions: vec![],
+            loaders: vec![],
+            sha1: Some(sha.into()),
+            size: 0,
+            download_urls: if url { vec!["u".into()] } else { vec![] },
+            date_published: date.into(),
+            dependencies: vec![],
+            fingerprint: None,
         };
-        let lm = LocalMod { path: "p".into(), file_name: "a.jar".into(), enabled: true, size: 0, sha1: "old".into(), curseforge_fingerprint: 0, meta: ModMeta::default() };
+        let lm = LocalMod {
+            path: "p".into(),
+            file_name: "a.jar".into(),
+            enabled: true,
+            size: 0,
+            sha1: "old".into(),
+            curseforge_fingerprint: 0,
+            meta: ModMeta::default(),
+        };
         let cur = [("old".to_string(), mk("old", "2024-01-01", true))].into();
         let newer = [("old".to_string(), mk("new", "2024-06-01", true))].into();
         assert_eq!(compute_updates(std::slice::from_ref(&lm), &cur, &newer).len(), 1);

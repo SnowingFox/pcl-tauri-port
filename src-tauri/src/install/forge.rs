@@ -6,7 +6,7 @@
 use super::vanilla::*;
 use crate::download::engine::FileSpec;
 use crate::download::error::{DlError, DlResult};
-use crate::download::manifest::{maven_path, host_os, VersionJson};
+use crate::download::manifest::{VersionJson, host_os, maven_path};
 use crate::download::{Manager, TaskCtx};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -50,7 +50,9 @@ pub fn parse_profile(v: &Value) -> DlResult<Profile> {
         .as_object()
         .map(|o| o.iter().filter_map(|(k, e)| Some((k.clone(), e["client"].as_str()?.to_string()))).collect())
         .unwrap_or_default();
-    let strs = |x: &Value| -> Vec<String> { x.as_array().map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect()).unwrap_or_default() };
+    let strs = |x: &Value| -> Vec<String> {
+        x.as_array().map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect()).unwrap_or_default()
+    };
     let processors = v["processors"]
         .as_array()
         .map(|a| {
@@ -61,7 +63,10 @@ pub fn parse_profile(v: &Value) -> DlResult<Profile> {
                         jar: p["jar"].as_str()?.to_string(),
                         classpath: strs(&p["classpath"]),
                         args: strs(&p["args"]),
-                        outputs: p["outputs"].as_object().map(|o| o.iter().filter_map(|(k, x)| Some((k.clone(), x.as_str()?.to_string()))).collect()).unwrap_or_default(),
+                        outputs: p["outputs"]
+                            .as_object()
+                            .map(|o| o.iter().filter_map(|(k, x)| Some((k.clone(), x.as_str()?.to_string()))).collect())
+                            .unwrap_or_default(),
                     })
                 })
                 .collect()
@@ -108,12 +113,13 @@ pub fn find_java(explicit: Option<&str>) -> String {
         }
     }
     if let Ok(o) = std::process::Command::new("/usr/libexec/java_home").output()
-        && o.status.success() {
-            let p = Path::new(String::from_utf8_lossy(&o.stdout).trim()).join("bin/java");
-            if p.is_file() {
-                return p.to_string_lossy().into_owned();
-            }
+        && o.status.success()
+    {
+        let p = Path::new(String::from_utf8_lossy(&o.stdout).trim()).join("bin/java");
+        if p.is_file() {
+            return p.to_string_lossy().into_owned();
         }
+    }
     "java".into()
 }
 
@@ -150,12 +156,13 @@ async fn fetch_profile_libs(ctx: &TaskCtx, libs_raw: &[Value], installer: &Path,
     for l in libs_raw {
         let lib: crate::download::manifest::Library = serde_json::from_value(l.clone())?;
         if let Some(a) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref())
-            && a.url.is_empty() {
-                if let Some(p) = a.path.clone().or_else(|| maven_path(&lib.name)).filter(|p| crate::settings::guard::is_safe_rel(p)) {
-                    bundled.push(p);
-                }
-                continue;
+            && a.url.is_empty()
+        {
+            if let Some(p) = a.path.clone().or_else(|| maven_path(&lib.name)).filter(|p| crate::settings::guard::is_safe_rel(p)) {
+                bundled.push(p);
             }
+            continue;
+        }
         for f in lib.files(os, arch) {
             files.push(FileSpec::new(f.url, libdir.join(&f.path)).with_sha1(f.sha1).with_size(f.size));
         }
@@ -194,7 +201,14 @@ async fn outputs_valid(outs: &[(String, String)], vars: &HashMap<String, String>
 }
 
 /// Install Forge or NeoForge `ver` for `mc`. Returns the new version id.
-pub async fn install_forge_like(ctx: &TaskCtx, mgr: &Arc<Manager>, fl: Flavor, mc: &str, ver: &str, java: Option<String>) -> DlResult<String> {
+pub async fn install_forge_like(
+    ctx: &TaskCtx,
+    mgr: &Arc<Manager>,
+    fl: Flavor,
+    mc: &str,
+    ver: &str,
+    java: Option<String>,
+) -> DlResult<String> {
     let gd = ctx.cfg.game_dir.clone();
     let libs = gd.join("libraries");
     install_vanilla(ctx, mgr, mc, 0.0, 0.6).await?;
@@ -208,14 +222,19 @@ pub async fn install_forge_like(ctx: &TaskCtx, mgr: &Arc<Manager>, fl: Flavor, m
     if fl == Flavor::NeoForge {
         spec.urls.push(format!("https://bmclapi2.bangbang93.com/neoforge/version/{ver}/download/installer.jar"));
     } else {
-        spec.urls.push(format!("https://bmclapi2.bangbang93.com/forge/download?mcversion={mc}&version={ver}&category=installer&format=jar"));
+        spec.urls
+            .push(format!("https://bmclapi2.bangbang93.com/forge/download?mcversion={mc}&version={ver}&category=installer&format=jar"));
     }
     ctx.file(spec).await?;
 
     // profile
     let prof_raw: Value = {
         let i = installer.clone();
-        serde_json::from_slice(&tokio::task::spawn_blocking(move || read_entry(&i, "install_profile.json")).await.map_err(|e| DlError::Other(e.to_string()))??)?
+        serde_json::from_slice(
+            &tokio::task::spawn_blocking(move || read_entry(&i, "install_profile.json"))
+                .await
+                .map_err(|e| DlError::Other(e.to_string()))??,
+        )?
     };
     let old = prof_raw.get("install").is_some();
     let (version_raw, vid, libs_raw, profile) = if old {
@@ -236,7 +255,9 @@ pub async fn install_forge_like(ctx: &TaskCtx, mgr: &Arc<Manager>, fl: Flavor, m
         let p = parse_profile(&prof_raw)?;
         let i = installer.clone();
         let entry = p.json_entry.clone();
-        let vraw: Value = serde_json::from_slice(&tokio::task::spawn_blocking(move || read_entry(&i, &entry)).await.map_err(|e| DlError::Other(e.to_string()))??)?;
+        let vraw: Value = serde_json::from_slice(
+            &tokio::task::spawn_blocking(move || read_entry(&i, &entry)).await.map_err(|e| DlError::Other(e.to_string()))??,
+        )?;
         let id = vraw["id"].as_str().map(String::from).or_else(|| p.version_id.clone()).ok_or("no version id")?;
         let mut l = p.libraries.clone();
         l.extend(vraw["libraries"].as_array().cloned().unwrap_or_default());
@@ -285,8 +306,12 @@ pub async fn install_forge_like(ctx: &TaskCtx, mgr: &Arc<Manager>, fl: Flavor, m
                 continue;
             }
             let jar = libs.join(maven_path(&proc_.jar).ok_or("bad processor coord")?);
-            let main = { let j = jar.clone(); tokio::task::spawn_blocking(move || jar_main_class(&j)).await.map_err(|e| DlError::Other(e.to_string()))?? };
-            let mut cp: Vec<String> = proc_.classpath.iter().filter_map(|c| maven_path(c)).map(|p| libs.join(p).to_string_lossy().into_owned()).collect();
+            let main = {
+                let j = jar.clone();
+                tokio::task::spawn_blocking(move || jar_main_class(&j)).await.map_err(|e| DlError::Other(e.to_string()))??
+            };
+            let mut cp: Vec<String> =
+                proc_.classpath.iter().filter_map(|c| maven_path(c)).map(|p| libs.join(p).to_string_lossy().into_owned()).collect();
             cp.push(jar.to_string_lossy().into_owned());
             let args: Vec<String> = proc_.args.iter().map(|a| substitute(a, &vars, &libs)).collect();
             let out = tokio::process::Command::new(&java)
@@ -321,7 +346,10 @@ mod tests {
     #[test]
     fn tokens() {
         let libs = Path::new("/g/libraries");
-        assert_eq!(resolve_token("[net.minecraftforge:forge:1.0:client]", libs), "/g/libraries/net/minecraftforge/forge/1.0/forge-1.0-client.jar");
+        assert_eq!(
+            resolve_token("[net.minecraftforge:forge:1.0:client]", libs),
+            "/g/libraries/net/minecraftforge/forge/1.0/forge-1.0-client.jar"
+        );
         assert_eq!(resolve_token("'1.20.1'", libs), "1.20.1");
         assert_eq!(resolve_token("--task", libs), "--task");
         let mut v = HashMap::new();

@@ -22,7 +22,13 @@ pub fn install_vanilla(m: Mgr<'_>, mc_version: String) -> Result<String, DlError
 }
 
 #[tauri::command]
-pub fn install_loader(m: Mgr<'_>, loader: String, mc_version: String, loader_version: String, java_path: Option<String>) -> Result<String, DlError> {
+pub fn install_loader(
+    m: Mgr<'_>,
+    loader: String,
+    mc_version: String,
+    loader_version: String,
+    java_path: Option<String>,
+) -> Result<String, DlError> {
     use crate::settings::guard::{check_mc_version, check_version_token};
     check_mc_version(&mc_version).map_err(DlError::Other)?;
     check_version_token("加载器版本", &loader_version).map_err(DlError::Other)?;
@@ -86,7 +92,12 @@ pub fn install_optifine_mod(m: Mgr<'_>, mc_version: String, kind: String, patch:
 pub fn install_list_installed(m: Mgr<'_>) -> Vec<String> {
     let dir = m.cfg().game_dir.join("versions");
     let mut v: Vec<String> = std::fs::read_dir(dir)
-        .map(|r| r.flatten().filter(|e| e.path().join(format!("{}.json", e.file_name().to_string_lossy())).is_file()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .map(|r| {
+            r.flatten()
+                .filter(|e| e.path().join(format!("{}.json", e.file_name().to_string_lossy())).is_file())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
         .unwrap_or_default();
     v.sort();
     v

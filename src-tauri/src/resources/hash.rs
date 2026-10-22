@@ -49,11 +49,7 @@ pub fn murmur2(data: &[u8], seed: u32) -> u32 {
 
 /// CurseForge fingerprint: murmur2 over the file with whitespace bytes (9,10,13,32) removed.
 pub fn curseforge_fingerprint(data: &[u8]) -> u32 {
-    let filtered: Vec<u8> = data
-        .iter()
-        .copied()
-        .filter(|b| !matches!(b, 9 | 10 | 13 | 32))
-        .collect();
+    let filtered: Vec<u8> = data.iter().copied().filter(|b| !matches!(b, 9 | 10 | 13 | 32)).collect();
     murmur2(&filtered, 1)
 }
 
@@ -75,6 +71,7 @@ mod tests {
 
     /// The previous `chunks_exact(4)` implementation, kept to prove the `as_chunks` refactor
     /// (needed for clippy) did not change any fingerprint.
+    #[allow(clippy::chunks_exact_to_as_chunks)] // intentionally the old form: this is the oracle
     fn murmur2_reference(data: &[u8], seed: u32) -> u32 {
         const M: u32 = 0x5bd1_e995;
         let mut h: u32 = seed ^ (data.len() as u32);

@@ -45,9 +45,10 @@ pub(crate) fn check_settings_change(old: &GlobalSettings, next: &GlobalSettings)
         }
     }
     if next.java.selected != old.java.selected
-        && let Some(j) = next.java.selected.as_deref().filter(|j| !j.is_empty()) {
-            crate::java::check_java_path(j)?;
-        }
+        && let Some(j) = next.java.selected.as_deref().filter(|j| !j.is_empty())
+    {
+        crate::java::check_java_path(j)?;
+    }
     for j in next.java.custom_paths.iter().filter(|j| !old.java.custom_paths.contains(j)) {
         crate::java::check_java_path(j)?;
     }

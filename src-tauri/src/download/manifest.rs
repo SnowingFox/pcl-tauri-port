@@ -119,7 +119,13 @@ pub fn host_os() -> (&'static str, &'static str) {
     } else {
         "linux"
     };
-    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else if cfg!(target_arch = "x86") { "x86" } else { "x86_64" };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else if cfg!(target_arch = "x86") {
+        "x86"
+    } else {
+        "x86_64"
+    };
     (os, arch)
 }
 
@@ -190,20 +196,23 @@ impl Library {
         let mut out = vec![];
         if let Some(d) = &self.downloads {
             if let Some(a) = &d.artifact
-                && !a.url.is_empty() {
-                    let path = a.path.clone().or_else(|| maven_path(&self.name));
-                    if let Some(path) = path {
-                        out.push(LibFile { path, url: a.url.clone(), sha1: a.sha1.clone(), size: a.size });
-                    }
+                && !a.url.is_empty()
+            {
+                let path = a.path.clone().or_else(|| maven_path(&self.name));
+                if let Some(path) = path {
+                    out.push(LibFile { path, url: a.url.clone(), sha1: a.sha1.clone(), size: a.size });
                 }
+            }
             if let (Some(n), Some(c)) = (&self.natives, &d.classifiers)
-                && let Some(key) = n.get(os) {
-                    let key = key.replace("${arch}", if arch == "x86" { "32" } else { "64" });
-                    if let Some(i) = c.get(&key)
-                        && let Some(path) = i.path.clone().or_else(|| maven_path(&format!("{}:{}", self.name, key))) {
-                            out.push(LibFile { path, url: i.url.clone(), sha1: i.sha1.clone(), size: i.size });
-                        }
+                && let Some(key) = n.get(os)
+            {
+                let key = key.replace("${arch}", if arch == "x86" { "32" } else { "64" });
+                if let Some(i) = c.get(&key)
+                    && let Some(path) = i.path.clone().or_else(|| maven_path(&format!("{}:{}", self.name, key)))
+                {
+                    out.push(LibFile { path, url: i.url.clone(), sha1: i.sha1.clone(), size: i.size });
                 }
+            }
             if !out.is_empty() || d.artifact.is_some() {
                 return out;
             }

@@ -40,10 +40,7 @@ impl From<serde_json::Error> for SettingsError {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// App data directory. `PCL_DATA_DIR` overrides (used by tests and portable setups).
@@ -63,22 +60,14 @@ pub fn data_dir() -> PathBuf {
 
 /// The official macOS Minecraft folder.
 pub fn default_minecraft_dir() -> PathBuf {
-    if cfg!(target_os = "macos") {
-        home_dir().join("Library/Application Support/minecraft")
-    } else {
-        home_dir().join(".minecraft")
-    }
+    if cfg!(target_os = "macos") { home_dir().join("Library/Application Support/minecraft") } else { home_dir().join(".minecraft") }
 }
 
 /// Write JSON atomically: temp file in the same dir, fsync, rename over target.
 pub fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), SettingsError> {
     let parent = path.parent().ok_or_else(|| SettingsError::Invalid("path has no parent".into()))?;
     fs::create_dir_all(parent)?;
-    let tmp = parent.join(format!(
-        ".{}.{}.tmp",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("settings"),
-        std::process::id()
-    ));
+    let tmp = parent.join(format!(".{}.{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("settings"), std::process::id()));
     let bytes = serde_json::to_vec_pretty(value)?;
     {
         let mut f = fs::File::create(&tmp)?;
@@ -111,17 +100,15 @@ pub fn migrate(mut doc: Value) -> Value {
         let mut out = json!({ "schema_version": 1 });
         if let Some(obj) = doc.as_object_mut() {
             if let Some(Value::String(p)) = obj.remove("java_path")
-                && !p.is_empty() {
-                    out["java"] = json!({ "selected": p });
-                }
+                && !p.is_empty()
+            {
+                out["java"] = json!({ "selected": p });
+            }
             if let Some(mb) = obj.remove("memory_mb").and_then(|v| v.as_u64()) {
                 out["memory"] = json!({ "mode": "custom", "custom_mb": mb });
             }
             if let Some(Value::Array(folders)) = obj.remove("mc_folders") {
-                let list: Vec<Value> = folders
-                    .into_iter()
-                    .filter_map(|f| f.as_str().map(|s| json!({ "name": s, "path": s })))
-                    .collect();
+                let list: Vec<Value> = folders.into_iter().filter_map(|f| f.as_str().map(|s| json!({ "name": s, "path": s }))).collect();
                 out["game"] = json!({ "folders": list });
             }
             if let Some(Value::String(s)) = obj.remove("download_source") {
@@ -160,9 +147,7 @@ impl SettingsStore {
     /// `settings.json.corrupt` and defaults are used, so launch never fails.
     pub fn load(path: PathBuf) -> Self {
         let mut settings = match fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<Value>(&bytes)
-                .and_then(|v| serde_json::from_value::<GlobalSettings>(migrate(v)))
-            {
+            Ok(bytes) => match serde_json::from_slice::<Value>(&bytes).and_then(|v| serde_json::from_value::<GlobalSettings>(migrate(v))) {
                 Ok(s) => s,
                 Err(_) => {
                     let _ = fs::rename(&path, path.with_extension("json.corrupt"));
@@ -204,8 +189,7 @@ impl SettingsStore {
     pub fn patch(&self, patch: Value) -> Result<GlobalSettings, SettingsError> {
         let mut doc = serde_json::to_value(self.get())?;
         merge(&mut doc, patch);
-        let next: GlobalSettings =
-            serde_json::from_value(doc).map_err(|e| SettingsError::Invalid(e.to_string()))?;
+        let next: GlobalSettings = serde_json::from_value(doc).map_err(|e| SettingsError::Invalid(e.to_string()))?;
         self.set(next)
     }
 
@@ -269,11 +253,8 @@ mod tests {
     fn migrates_v0_flat_layout() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("settings.json");
-        fs::write(
-            &p,
-            r#"{"java_path":"/opt/java/bin/java","memory_mb":8192,"mc_folders":["/games/mc"],"download_source":"official"}"#,
-        )
-        .unwrap();
+        fs::write(&p, r#"{"java_path":"/opt/java/bin/java","memory_mb":8192,"mc_folders":["/games/mc"],"download_source":"official"}"#)
+            .unwrap();
         let g = SettingsStore::load(p).get();
         assert_eq!(g.schema_version, 1);
         assert_eq!(g.java.selected.as_deref(), Some("/opt/java/bin/java"));
@@ -332,10 +313,7 @@ mod tests {
     fn atomic_write_leaves_no_temp_files() {
         let (d, s) = tmp_store();
         s.update(|g| g.launcher.debug_mode = true).unwrap();
-        let names: Vec<_> = fs::read_dir(d.path())
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
+        let names: Vec<_> = fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert_eq!(names, vec!["settings.json".to_string()]);
     }
 

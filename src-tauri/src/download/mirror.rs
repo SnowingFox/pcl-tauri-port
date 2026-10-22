@@ -60,10 +60,7 @@ mod tests {
             to_mirror("https://resources.download.minecraft.net/ab/abcdef").unwrap(),
             "https://bmclapi2.bangbang93.com/assets/ab/abcdef"
         );
-        assert_eq!(
-            to_mirror("https://libraries.minecraft.net/a/b/c.jar").unwrap(),
-            "https://bmclapi2.bangbang93.com/maven/a/b/c.jar"
-        );
+        assert_eq!(to_mirror("https://libraries.minecraft.net/a/b/c.jar").unwrap(), "https://bmclapi2.bangbang93.com/maven/a/b/c.jar");
         assert_eq!(
             to_mirror("https://maven.neoforged.net/releases/net/neoforged/x.jar").unwrap(),
             "https://bmclapi2.bangbang93.com/maven/net/neoforged/x.jar"

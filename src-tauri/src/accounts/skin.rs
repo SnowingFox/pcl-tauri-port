@@ -1,6 +1,6 @@
 //! Skin / avatar helpers. The frontend crops the head from the returned skin PNG
 //! (canvas, 8x8 at (8,8) plus hat layer at (40,8)); no image crate needed here.
-use super::{microsoft::Endpoints, AccountError, Result};
+use super::{AccountError, Result, microsoft::Endpoints};
 use base64::Engine;
 
 pub const MOJANG_SESSION_PROFILE: &str = "https://sessionserver.mojang.com/session/minecraft/profile";
@@ -27,20 +27,12 @@ pub struct SkinInfo {
 /// Parse a session-server profile JSON (Mojang or Yggdrasil) and extract the skin.
 pub fn parse_textures(body: &str) -> Result<SkinInfo> {
     let v: serde_json::Value = serde_json::from_str(body)?;
-    let prop = v["properties"]
-        .as_array()
-        .and_then(|a| a.iter().find(|p| p["name"] == "textures"))
-        .and_then(|p| p["value"].as_str());
+    let prop = v["properties"].as_array().and_then(|a| a.iter().find(|p| p["name"] == "textures")).and_then(|p| p["value"].as_str());
     let Some(b64) = prop else { return Ok(SkinInfo { url: None, slim: false }) };
-    let raw = base64::engine::general_purpose::STANDARD
-        .decode(b64)
-        .map_err(|e| AccountError::BadResponse(e.to_string()))?;
+    let raw = base64::engine::general_purpose::STANDARD.decode(b64).map_err(|e| AccountError::BadResponse(e.to_string()))?;
     let t: serde_json::Value = serde_json::from_slice(&raw)?;
     let skin = &t["textures"]["SKIN"];
-    Ok(SkinInfo {
-        url: skin["url"].as_str().map(String::from),
-        slim: skin["metadata"]["model"] == "slim",
-    })
+    Ok(SkinInfo { url: skin["url"].as_str().map(String::from), slim: skin["metadata"]["model"] == "slim" })
 }
 
 /// `profile_base` is the session-server profile URL prefix

@@ -11,14 +11,20 @@ pub fn parse(pack_json: &str, instance_cfg: Option<&str>, base: &str) -> Result<
         let uid = c["uid"].as_str().unwrap_or_default();
         let ver = c["version"].as_str().unwrap_or_default().to_string();
         let l = match uid {
-            "net.minecraft" => { mc = Some(ver); continue }
+            "net.minecraft" => {
+                mc = Some(ver);
+                continue;
+            }
             "net.minecraftforge" => ModLoader::Forge,
             "net.neoforged" => ModLoader::NeoForge,
             "net.fabricmc.fabric-loader" => ModLoader::Fabric,
             "org.quiltmc.quilt-loader" => ModLoader::Quilt,
             // intermediary mappings / LWJGL are implied by the above
             "net.fabricmc.intermediary" | "org.quiltmc.hashed" | "org.lwjgl" | "org.lwjgl3" => continue,
-            other => { warnings.push(format!("ignored component: {other}")); continue }
+            other => {
+                warnings.push(format!("ignored component: {other}"));
+                continue;
+            }
         };
         loaders.push(LoaderSpec { loader: l, version: ver });
     }

@@ -26,10 +26,7 @@ pub fn seek(text: &str, pat: &str) -> Option<String> {
 
 /// All matches, same group rule as `seek`.
 pub fn search(text: &str, pat: &str) -> Vec<String> {
-    rx(pat)
-        .captures_iter(text)
-        .filter_map(|c| c.get(1).or_else(|| c.get(0)).map(|m| m.as_str().to_string()))
-        .collect()
+    rx(pat).captures_iter(text).filter_map(|c| c.get(1).or_else(|| c.get(0)).map(|m| m.as_str().to_string())).collect()
 }
 
 pub fn check(text: &str, pat: &str) -> bool {

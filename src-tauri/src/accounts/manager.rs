@@ -2,7 +2,7 @@ use super::microsoft::{self as ms, Endpoints};
 use super::secrets::{self, SecretStore};
 use super::store::{self, AccountKind, StoreData, StoredAccount};
 use super::yggdrasil as ygg;
-use super::{offline, undash, AccountError, AccountInfo, AuthSession, AuthlibInjectorConfig, Result};
+use super::{AccountError, AccountInfo, AuthSession, AuthlibInjectorConfig, Result, offline, undash};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 /// legitimately live on a LAN, but never on this machine or a link-local address, and a redirect
 /// must not lead there either.
 fn guarded_http() -> reqwest::Client {
-    use crate::settings::guard::{redirect_policy, GuardedResolver, HostPolicy};
+    use crate::settings::guard::{GuardedResolver, HostPolicy, redirect_policy};
     reqwest::Client::builder()
         .user_agent("pcl-tauri-port")
         .timeout(std::time::Duration::from_secs(30))
@@ -73,7 +73,8 @@ impl AccountManager {
         let id = id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
         // Azure application (client) IDs are GUIDs. Anything else is a typo or an injection attempt.
         if let Some(i) = &id {
-            uuid::Uuid::parse_str(i).map_err(|_| AccountError::Invalid("Microsoft 客户端 ID 必须是 GUID（xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）".into()))?;
+            uuid::Uuid::parse_str(i)
+                .map_err(|_| AccountError::Invalid("Microsoft 客户端 ID 必须是 GUID（xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）".into()))?;
         }
         let mut d = self.data.lock().unwrap();
         d.settings.ms_client_id = id;
@@ -265,7 +266,9 @@ impl AccountManager {
         let (uuid, base) = match &acc.kind {
             AccountKind::Offline { .. } => return Ok(None),
             AccountKind::Microsoft { uuid, .. } => (uuid.clone(), super::skin::MOJANG_SESSION_PROFILE.to_string()),
-            AccountKind::Yggdrasil { uuid, server_url, .. } => (uuid.clone(), format!("{server_url}/sessionserver/session/minecraft/profile")),
+            AccountKind::Yggdrasil { uuid, server_url, .. } => {
+                (uuid.clone(), format!("{server_url}/sessionserver/session/minecraft/profile"))
+            }
         };
         let info = super::skin::fetch_skin_info(&self.http, &base, &uuid).await?;
         match info.url {

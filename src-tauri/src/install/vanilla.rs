@@ -3,7 +3,7 @@
 
 use crate::download::engine::FileSpec;
 use crate::download::error::{DlError, DlResult};
-use crate::download::manifest::{host_os, AssetIndex, VersionJson};
+use crate::download::manifest::{AssetIndex, VersionJson, host_os};
 use crate::download::{Manager, TaskCtx};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -123,10 +123,11 @@ pub async fn install_vanilla(ctx: &TaskCtx, mgr: &Arc<Manager>, mc: &str, start:
 
     // 6. logging config
     if let Some(f) = raw.pointer("/logging/client/file")
-        && let (Some(id), Some(url)) = (f["id"].as_str().filter(|i| crate::settings::guard::is_safe_component(i)), f["url"].as_str()) {
-            ctx.tracker.begin_stage("log-config", at, span * 0.03, 1, 0);
-            ctx.file(FileSpec::new(url, gd.join("assets/log_configs").join(id)).with_sha1(f["sha1"].as_str().map(String::from))).await?;
-        }
+        && let (Some(id), Some(url)) = (f["id"].as_str().filter(|i| crate::settings::guard::is_safe_component(i)), f["url"].as_str())
+    {
+        ctx.tracker.begin_stage("log-config", at, span * 0.03, 1, 0);
+        ctx.file(FileSpec::new(url, gd.join("assets/log_configs").join(id)).with_sha1(f["sha1"].as_str().map(String::from))).await?;
+    }
     ctx.tracker.begin_stage("done", start + span, 0.0, 0, 0);
     Ok(raw)
 }

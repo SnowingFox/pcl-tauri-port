@@ -1,5 +1,5 @@
 //! Third-party Yggdrasil / authlib-injector servers.
-use super::{dash, AccountError, Result};
+use super::{AccountError, Result, dash};
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
@@ -42,10 +42,7 @@ impl std::fmt::Debug for AuthResult {
 pub fn normalize_url(input: &str) -> Result<String> {
     let mut s = input.trim().to_string();
     if let Some(rest) = s.strip_prefix("authlib-injector:yggdrasil-server:") {
-        s = url::form_urlencoded::parse(format!("x={rest}").as_bytes())
-            .next()
-            .map(|(_, v)| v.into_owned())
-            .unwrap_or_default();
+        s = url::form_urlencoded::parse(format!("x={rest}").as_bytes()).next().map(|(_, v)| v.into_owned()).unwrap_or_default();
     }
     if !s.contains("://") {
         s = format!("https://{s}");
@@ -155,11 +152,7 @@ pub async fn authenticate(c: &reqwest::Client, server: &str, user: &str, passwor
 }
 
 pub async fn refresh(c: &reqwest::Client, server: &str, access: &str, client: &str) -> Result<AuthResult> {
-    let r = c
-        .post(format!("{server}/authserver/refresh"))
-        .json(&json!({"accessToken": access, "clientToken": client}))
-        .send()
-        .await?;
+    let r = c.post(format!("{server}/authserver/refresh")).json(&json!({"accessToken": access, "clientToken": client})).send().await?;
     let ok = r.status().is_success();
     let body = r.text().await?;
     if !ok {
@@ -170,11 +163,7 @@ pub async fn refresh(c: &reqwest::Client, server: &str, access: &str, client: &s
 
 /// 204 = valid, 403 = invalid.
 pub async fn validate(c: &reqwest::Client, server: &str, access: &str, client: &str) -> Result<bool> {
-    let r = c
-        .post(format!("{server}/authserver/validate"))
-        .json(&json!({"accessToken": access, "clientToken": client}))
-        .send()
-        .await?;
+    let r = c.post(format!("{server}/authserver/validate")).json(&json!({"accessToken": access, "clientToken": client})).send().await?;
     match r.status().as_u16() {
         204 | 200 => Ok(true),
         403 => Ok(false),
@@ -184,10 +173,7 @@ pub async fn validate(c: &reqwest::Client, server: &str, access: &str, client: &
 
 #[allow(dead_code)]
 pub async fn invalidate(c: &reqwest::Client, server: &str, access: &str, client: &str) -> Result<()> {
-    c.post(format!("{server}/authserver/invalidate"))
-        .json(&json!({"accessToken": access, "clientToken": client}))
-        .send()
-        .await?;
+    c.post(format!("{server}/authserver/invalidate")).json(&json!({"accessToken": access, "clientToken": client})).send().await?;
     Ok(())
 }
 
@@ -217,10 +203,7 @@ mod tests {
     #[test]
     fn urls() {
         assert_eq!(normalize_url("example.com/api/yggdrasil/").unwrap(), "https://example.com/api/yggdrasil");
-        assert_eq!(
-            normalize_url("authlib-injector:yggdrasil-server:https%3A%2F%2Fa.b%2Fapi").unwrap(),
-            "https://a.b/api"
-        );
+        assert_eq!(normalize_url("authlib-injector:yggdrasil-server:https%3A%2F%2Fa.b%2Fapi").unwrap(), "https://a.b/api");
         assert!(normalize_url("ftp://x").is_err());
     }
 
@@ -229,7 +212,15 @@ mod tests {
         assert!(checked_server_url("example.com/api/yggdrasil").is_ok());
         assert!(checked_server_url("http://192.168.1.20:8080/api").is_ok(), "LAN servers are allowed");
         assert!(checked_server_url("authlib-injector:yggdrasil-server:https%3A%2F%2Fa.example%2Fapi").is_ok());
-        for bad in ["http://127.0.0.1:8080", "http://localhost/api", "https://169.254.169.254/latest", "https://user:pw@example.com/api", "file:///etc/passwd", "ftp://x/y", "http://0.0.0.0/"] {
+        for bad in [
+            "http://127.0.0.1:8080",
+            "http://localhost/api",
+            "https://169.254.169.254/latest",
+            "https://user:pw@example.com/api",
+            "file:///etc/passwd",
+            "ftp://x/y",
+            "http://0.0.0.0/",
+        ] {
             assert!(checked_server_url(bad).is_err(), "{bad}");
         }
     }
@@ -249,7 +240,11 @@ mod tests {
         // The mock listens on 127.0.0.1; a hint pointing back at it must be refused.
         Mock::given(method("GET"))
             .and(path("/"))
-            .respond_with(ResponseTemplate::new(200).insert_header("X-Authlib-Injector-API-Location", format!("{}/api", s.uri()).as_str()).set_body_string(r#"{"meta":{"serverName":"T"}}"#))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("X-Authlib-Injector-API-Location", format!("{}/api", s.uri()).as_str())
+                    .set_body_string(r#"{"meta":{"serverName":"T"}}"#),
+            )
             .mount(&s)
             .await;
         let e = discover(&reqwest::Client::new(), &s.uri()).await.unwrap_err();
@@ -261,7 +256,10 @@ mod tests {
         let r = parse_auth_response(r#"{"accessToken":"A","clientToken":"C","selectedProfile":{"id":"b50ad385829d3141a2167e7d7539ba7f","name":"N"},"availableProfiles":[{"id":"1","name":"N"}]}"#).unwrap();
         assert_eq!(r.access_token, "A");
         assert_eq!(dashed(&r.profile.unwrap()), "b50ad385-829d-3141-a216-7e7d7539ba7f");
-        let r = parse_auth_response(r#"{"accessToken":"A","clientToken":"C","availableProfiles":[{"id":"1","name":"N"},{"id":"2","name":"M"}]}"#).unwrap();
+        let r = parse_auth_response(
+            r#"{"accessToken":"A","clientToken":"C","availableProfiles":[{"id":"1","name":"N"},{"id":"2","name":"M"}]}"#,
+        )
+        .unwrap();
         assert!(r.profile.is_none());
         assert_eq!(r.available.len(), 2);
     }
@@ -269,8 +267,19 @@ mod tests {
     #[tokio::test]
     async fn mocked_server() {
         let s = MockServer::start().await;
-        Mock::given(method("GET")).and(path("/")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"meta":{"serverName":"Test"}}"#)).mount(&s).await;
-        Mock::given(method("POST")).and(path("/authserver/authenticate")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"accessToken":"A","clientToken":"C","selectedProfile":{"id":"abc","name":"N"}}"#)).mount(&s).await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"meta":{"serverName":"Test"}}"#))
+            .mount(&s)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/authserver/authenticate"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"accessToken":"A","clientToken":"C","selectedProfile":{"id":"abc","name":"N"}}"#),
+            )
+            .mount(&s)
+            .await;
         Mock::given(method("POST")).and(path("/authserver/validate")).respond_with(ResponseTemplate::new(403)).mount(&s).await;
         let c = reqwest::Client::new();
         let info = discover(&c, &s.uri()).await.unwrap();
@@ -284,7 +293,14 @@ mod tests {
     #[tokio::test]
     async fn auth_failure_message() {
         let s = MockServer::start().await;
-        Mock::given(method("POST")).and(path("/authserver/authenticate")).respond_with(ResponseTemplate::new(403).set_body_string(r#"{"error":"ForbiddenOperationException","errorMessage":"Invalid credentials."}"#)).mount(&s).await;
+        Mock::given(method("POST"))
+            .and(path("/authserver/authenticate"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_string(r#"{"error":"ForbiddenOperationException","errorMessage":"Invalid credentials."}"#),
+            )
+            .mount(&s)
+            .await;
         let e = authenticate(&reqwest::Client::new(), &s.uri(), "u", "p", None).await.unwrap_err();
         assert!(e.to_string().contains("Invalid credentials"));
     }

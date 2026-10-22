@@ -84,9 +84,10 @@ impl ModpackInstallPlan {
                 crate::settings::guard::check_download_url(u).map_err(|e| format!("{}: {e}", f.path))?;
             }
             if let Some(h) = f.sha1.as_deref().filter(|h| !h.is_empty())
-                && (h.len() != 40 || !h.bytes().all(|b| b.is_ascii_hexdigit())) {
-                    return Err(format!("{}: invalid sha1", f.path));
-                }
+                && (h.len() != 40 || !h.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                return Err(format!("{}: invalid sha1", f.path));
+            }
         }
         Ok(())
     }
@@ -117,11 +118,9 @@ pub fn safe_join(base: &Path, rel: &str) -> Result<PathBuf, String> {
 
 /// Open the archive and detect the format; returns (format, base folder prefix inside the zip).
 pub fn detect_format(names: &[String]) -> Option<(PackFormat, String)> {
-    for (file, fmt) in [
-        ("modrinth.index.json", PackFormat::Modrinth),
-        ("manifest.json", PackFormat::CurseForge),
-        ("mmc-pack.json", PackFormat::MultiMc),
-    ] {
+    for (file, fmt) in
+        [("modrinth.index.json", PackFormat::Modrinth), ("manifest.json", PackFormat::CurseForge), ("mmc-pack.json", PackFormat::MultiMc)]
+    {
         // exact root, or one wrapper folder deep (PCL's ArchiveBaseFolder)
         if names.iter().any(|n| n == file) {
             return Some((fmt, String::new()));
@@ -142,7 +141,11 @@ pub fn parse_pack(path: &Path) -> Result<ModpackInstallPlan, String> {
         use std::io::Read;
         let mut s = String::new();
         // Manifests are small JSON documents; a decompression bomb must not exhaust memory.
-        z.by_name(&format!("{base}{n}")).map_err(|e| e.to_string())?.take(MAX_MANIFEST_BYTES + 1).read_to_string(&mut s).map_err(|e| e.to_string())?;
+        z.by_name(&format!("{base}{n}"))
+            .map_err(|e| e.to_string())?
+            .take(MAX_MANIFEST_BYTES + 1)
+            .read_to_string(&mut s)
+            .map_err(|e| e.to_string())?;
         if s.len() as u64 > MAX_MANIFEST_BYTES {
             return Err(format!("{n} is too large"));
         }
@@ -217,7 +220,10 @@ pub fn extract_overrides(archive: &Path, plan: &ModpackInstallPlan, instance_dir
         if entry.is_dir() {
             continue;
         }
-        let name = match entry.name() { Ok(n) => n.into_owned(), Err(_) => continue };
+        let name = match entry.name() {
+            Ok(n) => n.into_owned(),
+            Err(_) => continue,
+        };
         let Some(rel) = plan.override_dirs.iter().find_map(|d| {
             let d = if d.is_empty() || d.ends_with('/') { d.clone() } else { format!("{d}/") };
             name.strip_prefix(&d).map(str::to_string)
@@ -301,7 +307,13 @@ mod tests {
     fn extract_refuses_launcher_owned_files() {
         let d = tempfile::tempdir().unwrap();
         let idx = r#"{"name":"P","dependencies":{"minecraft":"1.20.1"},"files":[]}"#;
-        for evil in ["overrides/PCL/config.json", "overrides/pcl/config.json", "overrides/Pack.json", "overrides/pack.JAR", "overrides/Pack-natives/x.dylib"] {
+        for evil in [
+            "overrides/PCL/config.json",
+            "overrides/pcl/config.json",
+            "overrides/Pack.json",
+            "overrides/pack.JAR",
+            "overrides/Pack-natives/x.dylib",
+        ] {
             let inst = d.path().join("Pack");
             let _ = std::fs::remove_dir_all(&inst);
             let pack = d.path().join("p.mrpack");
@@ -314,7 +326,11 @@ mod tests {
         let inst = d.path().join("Pack");
         let _ = std::fs::remove_dir_all(&inst);
         let pack = d.path().join("ok.mrpack");
-        std::fs::write(&pack, build_zip(&[("modrinth.index.json", idx), ("overrides/config/a.json", "{}"), ("overrides/options.txt", "o")])).unwrap();
+        std::fs::write(
+            &pack,
+            build_zip(&[("modrinth.index.json", idx), ("overrides/config/a.json", "{}"), ("overrides/options.txt", "o")]),
+        )
+        .unwrap();
         let plan = parse_pack(&pack).unwrap();
         assert_eq!(extract_overrides(&pack, &plan, &inst).unwrap(), 2);
     }

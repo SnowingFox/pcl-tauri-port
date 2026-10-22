@@ -62,9 +62,10 @@ pub fn confine(roots: &[PathBuf], p: &Path) -> Result<PathBuf, String> {
     let r = resolve(p)?;
     for root in roots {
         if let Ok(rr) = resolve(root)
-            && r.starts_with(&rr) {
-                return Ok(r);
-            }
+            && r.starts_with(&rr)
+        {
+            return Ok(r);
+        }
     }
     Err(format!("路径不在已登记的 Minecraft 文件夹内：{}", p.display()))
 }
@@ -80,12 +81,9 @@ pub fn confine_instance_dir(roots: &[PathBuf], dir: &Path) -> Result<PathBuf, St
     let name_ok = r.file_name().and_then(|n| n.to_str()).map(|n| crate::instances::detect::validate_name(n).is_ok()).unwrap_or(false);
     let versions = r.parent();
     let in_versions = versions.and_then(|v| v.file_name()).map(|n| n == "versions").unwrap_or(false);
-    let root_ok = versions.and_then(|v| v.parent()).map(|root| roots.iter().any(|x| resolve(x).map(|x| x == root).unwrap_or(false))).unwrap_or(false);
-    if name_ok && in_versions && root_ok {
-        Ok(r)
-    } else {
-        Err(format!("不是有效的实例文件夹：{}", dir.display()))
-    }
+    let root_ok =
+        versions.and_then(|v| v.parent()).map(|root| roots.iter().any(|x| resolve(x).map(|x| x == root).unwrap_or(false))).unwrap_or(false);
+    if name_ok && in_versions && root_ok { Ok(r) } else { Err(format!("不是有效的实例文件夹：{}", dir.display())) }
 }
 
 /// Folders inside a Minecraft root / instance directory that hold user content. Generic
@@ -101,7 +99,8 @@ pub fn confine_content(roots: &[PathBuf], p: &Path) -> Result<(PathBuf, usize), 
     for root in roots {
         let Ok(rr) = resolve(root) else { continue };
         let Ok(rel) = r.strip_prefix(&rr) else { continue };
-        let parts: Vec<&std::ffi::OsStr> = rel.components().filter_map(|c| if let Component::Normal(s) = c { Some(s) } else { None }).collect();
+        let parts: Vec<&std::ffi::OsStr> =
+            rel.components().filter_map(|c| if let Component::Normal(s) = c { Some(s) } else { None }).collect();
         let skip = match parts.first().and_then(|s| s.to_str()) {
             Some("versions") => match parts.get(1).and_then(|s| s.to_str()) {
                 Some(n) if crate::instances::detect::validate_name(n).is_ok() => 2,
@@ -110,10 +109,11 @@ pub fn confine_content(roots: &[PathBuf], p: &Path) -> Result<(PathBuf, usize), 
             _ => 0,
         };
         if let Some(c) = parts.get(skip).and_then(|s| s.to_str())
-            && CONTENT_DIRS.contains(&c) {
-                let depth = parts.len() - skip - 1;
-                return Ok((r.clone(), depth));
-            }
+            && CONTENT_DIRS.contains(&c)
+        {
+            let depth = parts.len() - skip - 1;
+            return Ok((r.clone(), depth));
+        }
     }
     Err(format!("只能写入 mods、resourcepacks、shaderpacks、saves 或 config 文件夹：{}", p.display()))
 }
@@ -123,20 +123,60 @@ pub fn confine_content(roots: &[PathBuf], p: &Path) -> Result<(PathBuf, usize), 
 /// authlib-injector on a code path the webview does not control).
 pub fn jvm_arg_is_dangerous(arg: &str) -> bool {
     let a = arg.trim_start().to_ascii_lowercase();
-    ["-javaagent", "-agentlib", "-agentpath", "-xbootclasspath", "--patch-module", "--upgrade-module-path", "--add-modules=ALL", "-xrun", "-xdebug", "-xrunjdwp", "-xx:onerror", "-xx:onoutofmemoryerror", "-xx:+unlockdiagnostic", "-xx:vmoptionsfile", "-xx:flags", "-xx:+executeonlyexternal", "-xx:+createcoredumponcrash", "-djava.system.class.loader", "-djdk.attach", "-djava.security", "@"]
-        .iter()
-        .any(|p| a.starts_with(&p.to_ascii_lowercase()))
+    [
+        "-javaagent",
+        "-agentlib",
+        "-agentpath",
+        "-xbootclasspath",
+        "--patch-module",
+        "--upgrade-module-path",
+        "--add-modules=ALL",
+        "-xrun",
+        "-xdebug",
+        "-xrunjdwp",
+        "-xx:onerror",
+        "-xx:onoutofmemoryerror",
+        "-xx:+unlockdiagnostic",
+        "-xx:vmoptionsfile",
+        "-xx:flags",
+        "-xx:+executeonlyexternal",
+        "-xx:+createcoredumponcrash",
+        "-djava.system.class.loader",
+        "-djdk.attach",
+        "-djava.security",
+        "@",
+    ]
+    .iter()
+    .any(|p| a.starts_with(&p.to_ascii_lowercase()))
 }
 
 /// Top-level home folders that must never become a Minecraft root.
-const PROTECTED_HOME_DIRS: &[&str] =
-    &["Library", ".ssh", ".gnupg", ".config", ".aws", ".kube", ".docker", "Desktop", "Documents", "Downloads", "Pictures", "Music", "Movies", "Public", "Applications", ".Trash"];
+const PROTECTED_HOME_DIRS: &[&str] = &[
+    "Library",
+    ".ssh",
+    ".gnupg",
+    ".config",
+    ".aws",
+    ".kube",
+    ".docker",
+    "Desktop",
+    "Documents",
+    "Downloads",
+    "Pictures",
+    "Music",
+    "Movies",
+    "Public",
+    "Applications",
+    ".Trash",
+];
 
 /// The launcher's own data folders below `$HOME` (current Tauri app dir and the legacy one).
-const OWN_DATA_DIRS_UNDER_HOME: &[&str] = &["Library/Application Support/com.snowingfox.pcltauriport", "Library/Application Support/PCL-Tauri"];
+const OWN_DATA_DIRS_UNDER_HOME: &[&str] =
+    &["Library/Application Support/com.snowingfox.pcltauriport", "Library/Application Support/PCL-Tauri"];
 
 /// System locations that must never become a Minecraft root.
-const PROTECTED_SYSTEM_DIRS: &[&str] = &["/System", "/usr", "/bin", "/sbin", "/etc", "/dev", "/cores", "/Library", "/Applications", "/private/etc", "/private/var/db", "/opt"];
+const PROTECTED_SYSTEM_DIRS: &[&str] =
+    &["/System", "/usr", "/bin", "/sbin", "/etc", "/dev", "/cores", "/Library", "/Applications", "/private/etc", "/private/var/db", "/opt"];
 
 /// A folder may only be registered as a Minecraft root when it is not `/`, a system
 /// directory, the home directory or one of its protected children, or related to the
@@ -154,9 +194,11 @@ pub fn validate_root_candidate(path: &Path, home: &Path, data_dir: &Path) -> Res
     }
     if let Ok(rel) = p.strip_prefix(&home)
         && let Some(Component::Normal(first)) = rel.components().next()
-            && rel.components().count() == 1 && PROTECTED_HOME_DIRS.iter().any(|d| first == *d) {
-                return bad("受保护的目录");
-            }
+        && rel.components().count() == 1
+        && PROTECTED_HOME_DIRS.iter().any(|d| first == *d)
+    {
+        return bad("受保护的目录");
+    }
     for s in PROTECTED_SYSTEM_DIRS {
         if p.starts_with(s) {
             return bad("系统目录");
@@ -204,7 +246,9 @@ pub fn navigation_allowed(u: &url::Url, debug: bool) -> bool {
 
 /// Plugin that enforces [`navigation_allowed`] for every webview.
 pub fn navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    tauri::plugin::Builder::new("pcl-navigation-guard").on_navigation(|_webview, url| navigation_allowed(url, cfg!(debug_assertions))).build()
+    tauri::plugin::Builder::new("pcl-navigation-guard")
+        .on_navigation(|_webview, url| navigation_allowed(url, cfg!(debug_assertions)))
+        .build()
 }
 
 /// Which hosts a remote URL may point at.
@@ -258,7 +302,12 @@ pub fn host_blocked(u: &url::Url, p: HostPolicy) -> bool {
             if d == "localhost" || d.ends_with(".localhost") {
                 return true;
             }
-            p == HostPolicy::Public && (d.ends_with(".local") || d.ends_with(".internal") || d.ends_with(".lan") || d.ends_with(".home.arpa") || !d.contains('.'))
+            p == HostPolicy::Public
+                && (d.ends_with(".local")
+                    || d.ends_with(".internal")
+                    || d.ends_with(".lan")
+                    || d.ends_with(".home.arpa")
+                    || !d.contains('.'))
         }
         None => true,
     }
@@ -298,11 +347,7 @@ pub struct GuardedResolver(pub HostPolicy);
 
 pub(crate) fn filter_resolved(addrs: Vec<std::net::SocketAddr>, p: HostPolicy) -> Result<Vec<std::net::SocketAddr>, String> {
     let ok: Vec<_> = addrs.iter().copied().filter(|a| !ip_blocked(a.ip(), p)).collect();
-    if ok.is_empty() && !addrs.is_empty() {
-        Err("host resolves to a local or private address".into())
-    } else {
-        Ok(ok)
-    }
+    if ok.is_empty() && !addrs.is_empty() { Err("host resolves to a local or private address".into()) } else { Ok(ok) }
 }
 
 impl reqwest::dns::Resolve for GuardedResolver {
@@ -311,7 +356,8 @@ impl reqwest::dns::Resolve for GuardedResolver {
         let host = name.as_str().to_string();
         Box::pin(async move {
             let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
-            let ok = filter_resolved(addrs, policy).map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { format!("{host}: {e}").into() })?;
+            let ok = filter_resolved(addrs, policy)
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { format!("{host}: {e}").into() })?;
             Ok(Box::new(ok.into_iter()) as reqwest::dns::Addrs)
         })
     }
@@ -340,11 +386,7 @@ pub fn check_version_token(what: &str, s: &str) -> Result<(), String> {
         && !s.contains("..")
         && !s.starts_with(['.', '-'])
         && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'));
-    if ok {
-        Ok(())
-    } else {
-        Err(format!("无效的{what}：{s}"))
-    }
+    if ok { Ok(()) } else { Err(format!("无效的{what}：{s}")) }
 }
 
 /// Minecraft version ids end up in URLs and folder names. Same alphabet as
@@ -356,11 +398,7 @@ pub fn check_mc_version(s: &str) -> Result<(), String> {
         && !s.starts_with(['.', '-', ' '])
         && !s.ends_with(' ')
         && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-' | ' '));
-    if ok {
-        Ok(())
-    } else {
-        Err(format!("无效的 Minecraft 版本：{s}"))
-    }
+    if ok { Ok(()) } else { Err(format!("无效的 Minecraft 版本：{s}")) }
 }
 
 /// One path component taken from remote or on-disk metadata (version id, asset index id,
@@ -542,7 +580,11 @@ mod tests {
     #[tokio::test]
     async fn localhost_name_is_refused_at_dns_time() {
         // `localhost.` passes the textual check only if it were a public name; the resolver is the backstop.
-        let c = reqwest::Client::builder().dns_resolver(std::sync::Arc::new(GuardedResolver(HostPolicy::Public))).timeout(std::time::Duration::from_secs(5)).build().unwrap();
+        let c = reqwest::Client::builder()
+            .dns_resolver(std::sync::Arc::new(GuardedResolver(HostPolicy::Public)))
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
         let err = c.get("http://localhost.localdomain.:9/").send().await.unwrap_err();
         assert!(err.is_connect() || err.is_request(), "{err}");
     }
@@ -568,7 +610,11 @@ mod tests {
                 let _ = s.shutdown().await;
             }
         });
-        let c = reqwest::Client::builder().redirect(redirect_policy(HostPolicy::Public)).timeout(std::time::Duration::from_secs(5)).build().unwrap();
+        let c = reqwest::Client::builder()
+            .redirect(redirect_policy(HostPolicy::Public))
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
         let err = c.get(format!("http://{addr}/x")).send().await.unwrap_err();
         assert!(err.is_redirect(), "expected a redirect error, got {err}");
     }
@@ -626,10 +672,32 @@ mod tests {
 
     #[test]
     fn dangerous_jvm_args() {
-        for bad in ["-javaagent:/tmp/x.jar", "-JavaAgent:x", "-agentlib:jdwp=transport=dt_socket", "-agentpath:/tmp/x.dylib", "-Xbootclasspath/a:/tmp/x.jar", "--patch-module=java.base=/tmp/x", "-XX:OnError=open -a Calculator", "-XX:OnOutOfMemoryError=sh", "-XX:Flags=/tmp/x", "-XX:VMOptionsFile=/tmp/x", "@/tmp/argfile", " -javaagent:x", "-Djava.system.class.loader=Evil"] {
+        for bad in [
+            "-javaagent:/tmp/x.jar",
+            "-JavaAgent:x",
+            "-agentlib:jdwp=transport=dt_socket",
+            "-agentpath:/tmp/x.dylib",
+            "-Xbootclasspath/a:/tmp/x.jar",
+            "--patch-module=java.base=/tmp/x",
+            "-XX:OnError=open -a Calculator",
+            "-XX:OnOutOfMemoryError=sh",
+            "-XX:Flags=/tmp/x",
+            "-XX:VMOptionsFile=/tmp/x",
+            "@/tmp/argfile",
+            " -javaagent:x",
+            "-Djava.system.class.loader=Evil",
+        ] {
             assert!(jvm_arg_is_dangerous(bad), "{bad}");
         }
-        for ok in ["-Xmx4G", "-Xms512m", "-XX:+UseG1GC", "-XX:-OmitStackTraceInFastThrow", "-Dfml.ignoreInvalidMinecraftCertificates=True", "-Dminecraft.launcher.brand=pcl", "-XX:MaxGCPauseMillis=50"] {
+        for ok in [
+            "-Xmx4G",
+            "-Xms512m",
+            "-XX:+UseG1GC",
+            "-XX:-OmitStackTraceInFastThrow",
+            "-Dfml.ignoreInvalidMinecraftCertificates=True",
+            "-Dminecraft.launcher.brand=pcl",
+            "-XX:MaxGCPauseMillis=50",
+        ] {
             assert!(!jvm_arg_is_dangerous(ok), "{ok}");
         }
     }

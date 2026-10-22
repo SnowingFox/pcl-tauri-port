@@ -1,13 +1,13 @@
 mod accounts;
-mod java;
-mod launch;
 mod crash;
-mod instances;
-mod settings;
 mod download;
 mod install;
+mod instances;
+mod java;
+mod launch;
 mod modpack;
 mod resources;
+mod settings;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]

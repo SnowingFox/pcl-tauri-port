@@ -119,10 +119,7 @@ mod tests {
 
     #[test]
     fn missing_detection() {
-        let idx: AssetIndexFile = serde_json::from_str(
-            r#"{"objects":{"a/b.ogg":{"hash":"abcdef","size":3}},"virtual":true}"#,
-        )
-        .unwrap();
+        let idx: AssetIndexFile = serde_json::from_str(r#"{"objects":{"a/b.ogg":{"hash":"abcdef","size":3}},"virtual":true}"#).unwrap();
         assert!(idx.is_virtual);
         let tmp = std::env::temp_dir().join(format!("pcl-assets-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);

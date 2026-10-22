@@ -37,11 +37,7 @@ pub fn mc_folder_add(name: String, path: String) -> Result<Vec<McFolderEntry>, S
     guard::validate_new_root(Path::new(&path))?;
     let p = Path::new(&path);
     std::fs::create_dir_all(p.join("versions")).map_err(|e| format!("无法访问该文件夹：{e}"))?;
-    let name = if name.trim().is_empty() {
-        p.file_name().and_then(|n| n.to_str()).unwrap_or("Minecraft").to_string()
-    } else {
-        name
-    };
+    let name = if name.trim().is_empty() { p.file_name().and_then(|n| n.to_str()).unwrap_or("Minecraft").to_string() } else { name };
     global()
         .update(|g| {
             if let Some(f) = g.game.folders.iter_mut().find(|f| f.path == path) {
@@ -57,10 +53,7 @@ pub fn mc_folder_add(name: String, path: String) -> Result<Vec<McFolderEntry>, S
 #[tauri::command]
 pub fn mc_folder_remove(path: String) -> Result<Vec<McFolderEntry>, String> {
     // Only unregisters; files on disk are never touched.
-    global()
-        .update(|g| g.game.folders.retain(|f| f.path != path))
-        .map(|g| g.game.folders)
-        .map_err(|e| e.to_string())
+    global().update(|g| g.game.folders.retain(|f| f.path != path)).map(|g| g.game.folders).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

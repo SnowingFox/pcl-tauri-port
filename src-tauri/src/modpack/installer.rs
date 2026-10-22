@@ -10,12 +10,7 @@ pub async fn install(
     engine: &dyn ModpackInstaller,
 ) -> Result<(), String> {
     std::fs::create_dir_all(instance_dir).map_err(|e| e.to_string())?;
-    let files: Vec<PlanFile> = plan
-        .files
-        .iter()
-        .filter(|f| !f.optional || accepted_optional.contains(&f.path))
-        .cloned()
-        .collect();
+    let files: Vec<PlanFile> = plan.files.iter().filter(|f| !f.optional || accepted_optional.contains(&f.path)).cloned().collect();
     if let Some(unresolved) = files.iter().find(|f| f.urls.is_empty()) {
         return Err(format!("file has no download URL (resolve the plan first): {}", unresolved.path));
     }

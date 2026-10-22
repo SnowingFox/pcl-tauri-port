@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
-use version::{resolve_version, version_jar_path, RuleContext};
+use version::{RuleContext, resolve_version, version_jar_path};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchError {
@@ -51,7 +51,12 @@ pub struct AuthData {
 
 impl std::fmt::Debug for AuthData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthData").field("name", &self.name).field("uuid", &self.uuid).field("access_token", &"<redacted>").field("user_type", &self.user_type).finish()
+        f.debug_struct("AuthData")
+            .field("name", &self.name)
+            .field("uuid", &self.uuid)
+            .field("access_token", &"<redacted>")
+            .field("user_type", &self.user_type)
+            .finish()
     }
 }
 
@@ -193,9 +198,10 @@ pub fn prepare(req: &LaunchRequest) -> Result<(args::BuiltCommand, PrecheckRepor
     let cmd = args::build_command(req, &resolved, Path::new(&java.path), &ctx)?;
     natives::extract_natives(&resolved, &mc.join("libraries"), &cmd.natives_dir, &ctx)?;
     if let Some(id) = resolved.json.asset_index.as_ref().map(|a| a.id.clone())
-        && let Ok(idx) = assets::load_index(&mc.join("assets"), &id) {
-            assets::materialize_legacy(&mc.join("assets"), &cmd.working_dir, &idx)?;
-        }
+        && let Ok(idx) = assets::load_index(&mc.join("assets"), &id)
+    {
+        assets::materialize_legacy(&mc.join("assets"), &cmd.working_dir, &idx)?;
+    }
     std::fs::create_dir_all(&cmd.working_dir).map_err(|e| LaunchError::Io(e.to_string()))?;
     Ok((cmd, report))
 }
@@ -453,8 +459,14 @@ mod tests {
             minecraft_dir: "/nonexistent-mc".into(),
             version_id: "x".into(),
             auth: AuthData { name: "".into(), uuid: "u".into(), access_token: "t".into(), user_type: "msa".into() },
-            java_path: None, game_dir: None, max_memory_mb: Some(0), min_memory_mb: None,
-            extra_jvm_args: vec![], extra_game_args: vec![], demo: false, resolution: None,
+            java_path: None,
+            game_dir: None,
+            max_memory_mb: Some(0),
+            min_memory_mb: None,
+            extra_jvm_args: vec![],
+            extra_game_args: vec![],
+            demo: false,
+            resolution: None,
         };
         let (r, v) = precheck(&req);
         assert!(v.is_none() && !r.ok);

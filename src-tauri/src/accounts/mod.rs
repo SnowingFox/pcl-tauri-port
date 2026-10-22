@@ -189,7 +189,10 @@ mod tests {
             user_type: "mojang".into(),
             account_kind: "yggdrasil".into(),
             client_token: Some("SECRET-CLIENT".into()),
-            authlib_injector: Some(AuthlibInjectorConfig { server_url: "https://auth.example/api".into(), prefetched: Some("SECRET-META".into()) }),
+            authlib_injector: Some(AuthlibInjectorConfig {
+                server_url: "https://auth.example/api".into(),
+                prefetched: Some("SECRET-META".into()),
+            }),
         };
         let dbg = format!("{s:?} {:#?}", s);
         assert!(!dbg.contains("SECRET"), "{dbg}");
