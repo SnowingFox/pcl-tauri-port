@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stubLocalStorage } from "./helpers";
 
 const mem = stubLocalStorage();
@@ -33,6 +33,33 @@ describe("ui store", () => {
     expect(useUi.getState().toasts[0].action).toEqual({ label: "go", route: "/settings/java" });
     useUi.getState().dismissToast(id);
     expect(useUi.getState().toasts).toHaveLength(0);
+  });
+  it("does not stack an identical toast that is already showing", () => {
+    const ui = useUi.getState();
+    const a = ui.toast("登录失败: x", "error", 0);
+    const b = ui.toast("登录失败: x", "error", 0);
+    ui.toast("登录失败: x", "error", 0);
+    expect(b).toBe(a);
+    expect(useUi.getState().toasts).toHaveLength(1);
+    // A different kind or text is a different message.
+    ui.toast("登录失败: x", "info", 0);
+    ui.toast("登录失败: y", "error", 0);
+    expect(useUi.getState().toasts).toHaveLength(3);
+  });
+  it("a repeated toast restarts its countdown instead of vanishing early", () => {
+    vi.useFakeTimers();
+    try {
+      const ui = useUi.getState();
+      ui.toast("same", "error", 1000);
+      vi.advanceTimersByTime(800);
+      ui.toast("same", "error", 1000); // 800 ms into the first countdown
+      vi.advanceTimersByTime(800); // the first timer would have fired by now
+      expect(useUi.getState().toasts).toHaveLength(1);
+      vi.advanceTimersByTime(300);
+      expect(useUi.getState().toasts).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("keeps at most five toasts", () => {
     for (let i = 0; i < 9; i++) useUi.getState().toast(String(i), "info", 0);
