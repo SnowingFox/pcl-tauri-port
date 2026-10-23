@@ -10,6 +10,7 @@ pub mod error;
 pub mod install;
 pub mod instance;
 pub mod launch;
+pub mod limits;
 pub mod logging;
 pub mod modpack;
 pub mod paths;
@@ -71,6 +72,8 @@ impl AppCtx {
 /// Run once from the Tauri `setup` hook.
 pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::Manager as _;
+    // 0. Finder/Dock launches get a 256-file limit; downloads need far more (see limits.rs).
+    let fd_limit = limits::raise_open_file_limit();
     // 1. Move data from the pre-identifier directory before anything reads settings.
     let migrated = paths::migrate_legacy();
     let settings = crate::settings::commands::global();
@@ -82,6 +85,10 @@ pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => tracing::warn!("legacy data migration failed: {e}"),
     }
     tracing::info!(data_dir = %crate::settings::store::data_dir().display(), "starting");
+    match fd_limit {
+        Ok((before, after)) => tracing::info!(before, after, "open file limit"),
+        Err(e) => tracing::warn!("could not raise the open file limit: {e}"),
+    }
     // 3. Download manager, wired to the persisted settings.
     let mgr = crate::download::new_manager(app.clone());
     config::wire(mgr.clone());
