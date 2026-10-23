@@ -14,6 +14,10 @@ pub enum DlError {
     Size { path: String, expected: u64, actual: u64 },
     #[error("connection too slow (under {min_bytes} bytes in {secs}s): {url}")]
     Slow { url: String, min_bytes: u64, secs: u64 },
+    #[error("too slow: would still need about {eta_secs}s at the current speed: {url}")]
+    TooSlow { url: String, eta_secs: u64 },
+    #[error("no response within {secs}s: {url}")]
+    NoAnswer { url: String, secs: u64 },
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
     #[error("zip: {0}")]
@@ -40,5 +44,27 @@ impl From<String> for DlError {
 impl From<&str> for DlError {
     fn from(s: &str) -> Self {
         DlError::Other(s.to_string())
+    }
+}
+
+impl DlError {
+    /// Retrying the same URL cannot help: 4xx other than 408/429 (the file is not there).
+    pub fn is_permanent(&self) -> bool {
+        matches!(self, DlError::Status(c, _) if (400..500).contains(c) && *c != 408 && *c != 429)
+    }
+
+    /// Does this failure say something about the remote host (as opposed to this machine, a bad
+    /// file path or a cancellation)?
+    pub fn blames_host(&self) -> bool {
+        matches!(
+            self,
+            DlError::Http(_)
+                | DlError::Status(..)
+                | DlError::Hash { .. }
+                | DlError::Size { .. }
+                | DlError::Slow { .. }
+                | DlError::TooSlow { .. }
+                | DlError::NoAnswer { .. }
+        )
     }
 }

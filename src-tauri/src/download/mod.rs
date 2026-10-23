@@ -4,6 +4,7 @@
 pub mod engine;
 pub mod error;
 pub mod hash;
+pub mod health;
 pub mod manifest;
 pub mod mirror;
 pub mod segment;

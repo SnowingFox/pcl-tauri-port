@@ -4,6 +4,7 @@
 
 use super::error::{DlError, DlResult};
 use super::hash::{HashKind, file_hash};
+use super::health::{self, Plan};
 use super::mirror::{Source, candidates};
 use super::segment::plan_segments;
 use futures_util::StreamExt;
@@ -32,6 +33,14 @@ pub struct EngineConfig {
     /// silence. `stall_min_bytes == 0` turns the check off.
     pub stall_window: Duration,
     pub stall_min_bytes: u64,
+    /// Give up on a connection that is alive but slow when finishing from it would take longer than
+    /// this, provided another origin is available. Judged only after `slow_grace` of measurement.
+    pub slow_eta: Duration,
+    pub slow_grace: Duration,
+    /// How long to wait for the response headers from an origin that has an alternative. A host can
+    /// accept the connection and then take 10-20 s to answer; that wait happens before any byte
+    /// arrives, so the throughput checks above never see it.
+    pub header_timeout: Duration,
 }
 
 impl Default for EngineConfig {
@@ -45,6 +54,9 @@ impl Default for EngineConfig {
             stall_window: Duration::from_secs(20),
             // 1 KiB/s. Far below any working link, even one shared by dozens of connections.
             stall_min_bytes: 20 * 1024,
+            slow_eta: Duration::from_secs(15),
+            slow_grace: Duration::from_secs(4),
+            header_timeout: Duration::from_secs(8),
         }
     }
 }
@@ -343,8 +355,12 @@ fn part_path(dest: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// Download one file (skips if already valid). Tries mirror candidates in order,
-/// each with `cfg.retries` attempts and exponential backoff.
+/// Download one file (skips if already valid).
+///
+/// A file often has two origins (the official CDN and a mirror). Attempts alternate between them
+/// rather than spending every retry on one, a host that just failed or crawled is tried last for a
+/// while (see [`health`]), and a connection that is alive but slow is dropped when a healthy other
+/// origin could finish sooner. The caller's order (`cfg.source`) only breaks ties.
 pub async fn download_file(
     client: &reqwest::Client,
     cfg: &EngineConfig,
@@ -370,22 +386,30 @@ pub async fn download_file(
         }
         acc
     });
+    let mut plan = Plan::new(urls, cfg.retries);
     let mut last_err = DlError::Other("no url".into());
-    for url in urls {
-        for attempt in 0..cfg.retries.max(1) {
-            ctl.checkpoint().await?;
-            let counted = Arc::new(AtomicU64::new(0));
-            match try_once(client, cfg, spec, &url, ctl, tracker, &counted).await {
-                Ok(()) => return Ok(()),
-                Err(DlError::Cancelled) => return Err(DlError::Cancelled),
-                Err(e) => {
-                    tracker.sub_bytes(counted.load(Ordering::Relaxed));
-                    tracing::warn!(attempt = attempt + 1, of = cfg.retries.max(1), "download attempt failed for {url}: {e}");
-                    last_err = e;
-                    if is_permanent(&last_err) {
-                        break;
-                    }
-                    tokio::time::sleep(backoff(attempt)).await;
+    let mut round = 0u32;
+    while let Some(i) = plan.next() {
+        ctl.checkpoint().await?;
+        let url = plan.url(i).to_string();
+        let counted = Arc::new(AtomicU64::new(0));
+        // Only worth abandoning a slow connection if somewhere better exists.
+        let may_switch = plan.has_alternative(i);
+        match try_once(client, cfg, spec, &url, may_switch, ctl, tracker, &counted).await {
+            Ok(()) => {
+                health::succeeded(&url);
+                return Ok(());
+            }
+            Err(DlError::Cancelled) => return Err(DlError::Cancelled),
+            Err(e) => {
+                tracker.sub_bytes(counted.load(Ordering::Relaxed));
+                tracing::warn!(attempt = plan.tries(i) + 1, of = cfg.retries.max(1), "download attempt failed for {url}: {e}");
+                plan.failed(i, &e);
+                last_err = e;
+                // Back off only between rounds over the same origins, not when switching to a fresh one.
+                if plan.next().is_some_and(|n| plan.tries(n) > 0) {
+                    tokio::time::sleep(backoff(round)).await;
+                    round += 1;
                 }
             }
         }
@@ -425,11 +449,6 @@ impl Drop for Gauge<'_> {
     }
 }
 
-/// 4xx other than 408/429 will not get better on retry.
-fn is_permanent(e: &DlError) -> bool {
-    matches!(e, DlError::Status(c, _) if (400..500).contains(c) && *c != 408 && *c != 429)
-}
-
 fn backoff(attempt: u32) -> Duration {
     Duration::from_millis(200 * (1 << attempt.min(5)))
 }
@@ -441,22 +460,64 @@ struct RateGuard<'a> {
     url: &'a str,
     since: Instant,
     got: u64,
+    /// Give up on a slow-but-alive connection when finishing would take longer than `eta_limit`.
+    /// `None` when there is no other origin to switch to.
+    eta_limit: Option<(Duration, Duration)>,
+    started: Instant,
+    total_got: u64,
+    /// Bytes this transfer still has to receive, if the size is known.
+    remaining: Option<u64>,
 }
 
 impl<'a> RateGuard<'a> {
     fn new(cfg: &EngineConfig, url: &'a str) -> Self {
-        Self { window: cfg.stall_window, min_bytes: cfg.stall_min_bytes, url, since: Instant::now(), got: 0 }
+        let now = Instant::now();
+        Self {
+            window: cfg.stall_window,
+            min_bytes: cfg.stall_min_bytes,
+            url,
+            since: now,
+            got: 0,
+            eta_limit: None,
+            started: now,
+            total_got: 0,
+            remaining: None,
+        }
+    }
+
+    /// Allow abandoning this connection for being too slow, given how much is left to download.
+    fn with_eta(mut self, cfg: &EngineConfig, may_switch: bool, remaining: Option<u64>) -> Self {
+        if may_switch && remaining.is_some() {
+            self.eta_limit = Some((cfg.slow_eta, cfg.slow_grace));
+            self.remaining = remaining;
+        }
+        self
     }
 
     /// Start a fresh window, e.g. after the user paused the task.
     fn reset(&mut self) {
         self.since = Instant::now();
         self.got = 0;
+        // Time spent paused must not count towards the speed measurement either.
+        self.started = Instant::now();
+        self.total_got = 0;
     }
 
     /// Count `n` received bytes; errors when a whole window passed with too few.
     fn feed(&mut self, n: u64) -> DlResult<()> {
         self.got += n;
+        self.total_got += n;
+        if let (Some((limit, grace)), Some(remaining)) = (self.eta_limit, self.remaining) {
+            let el = self.started.elapsed();
+            if el >= grace && self.total_got > 0 {
+                let left = remaining.saturating_sub(self.total_got);
+                let bps = self.total_got as f64 / el.as_secs_f64();
+                let eta = left as f64 / bps;
+                if eta > limit.as_secs_f64() {
+                    return Err(DlError::TooSlow { url: self.url.to_string(), eta_secs: eta as u64 });
+                }
+            }
+        }
         if self.since.elapsed() >= self.window {
             if self.got < self.min_bytes {
                 return Err(DlError::Slow { url: self.url.to_string(), min_bytes: self.min_bytes, secs: self.window.as_secs() });
@@ -464,6 +525,20 @@ impl<'a> RateGuard<'a> {
             self.reset();
         }
         Ok(())
+    }
+}
+
+/// Send a request. When another origin could take over, only wait `cfg.header_timeout` for the
+/// response headers: a host that accepts the connection and then stays silent would otherwise hold the
+/// download up before any byte arrives, where no throughput check can see it. With no alternative the
+/// wait is left to the client's own timeouts.
+async fn send(req: reqwest::RequestBuilder, cfg: &EngineConfig, url: &str, may_switch: bool) -> DlResult<reqwest::Response> {
+    if !may_switch {
+        return Ok(req.send().await?);
+    }
+    match tokio::time::timeout(cfg.header_timeout, req.send()).await {
+        Ok(r) => Ok(r?),
+        Err(_) => Err(DlError::NoAnswer { url: url.to_string(), secs: cfg.header_timeout.as_secs_f64().ceil() as u64 }),
     }
 }
 
@@ -477,11 +552,13 @@ async fn checkpoint(ctl: &TaskCtl, guard: &mut RateGuard<'_>) -> DlResult<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn try_once(
     client: &reqwest::Client,
     cfg: &EngineConfig,
     spec: &FileSpec,
     url: &str,
+    may_switch: bool,
     ctl: &TaskCtl,
     tracker: &Arc<Tracker>,
     counted: &Arc<AtomicU64>,
@@ -489,17 +566,17 @@ async fn try_once(
     let part = part_path(&spec.dest);
     let big = spec.size.map(|s| cfg.segments > 1 && s >= cfg.min_segment * 2).unwrap_or(false);
     let res = if big {
-        match segmented(client, cfg, spec, url, &part, ctl, tracker, counted).await {
+        match segmented(client, cfg, spec, url, may_switch, &part, ctl, tracker, counted).await {
             Err(DlError::Other(m)) if m == "no-range" => {
                 tracker.sub_bytes(counted.swap(0, Ordering::Relaxed));
                 // `segmented` preallocated the file with zeros; `single` would resume after them.
                 let _ = tokio::fs::remove_file(&part).await;
-                single(client, cfg, spec, url, &part, ctl, tracker, counted).await
+                single(client, cfg, spec, url, may_switch, &part, ctl, tracker, counted).await
             }
             r => r,
         }
     } else {
-        single(client, cfg, spec, url, &part, ctl, tracker, counted).await
+        single(client, cfg, spec, url, may_switch, &part, ctl, tracker, counted).await
     };
     if let Err(e) = res {
         // Keep the partial only for a resumable single-stream failure; drop on hash/size problems.
@@ -528,6 +605,7 @@ async fn single(
     cfg: &EngineConfig,
     spec: &FileSpec,
     url: &str,
+    may_switch: bool,
     part: &Path,
     ctl: &TaskCtl,
     tracker: &Tracker,
@@ -544,7 +622,7 @@ async fn single(
     if existing > 0 {
         req = req.header("Range", format!("bytes={existing}-"));
     }
-    let resp = req.send().await?;
+    let resp = send(req, cfg, url, may_switch).await?;
     if resp.status().as_u16() == 416 && existing > 0 {
         // Partial is complete or stale; let verification decide.
         return Ok(());
@@ -558,7 +636,11 @@ async fn single(
     } else {
         tokio::fs::File::create(part).await?
     };
-    let mut guard = RateGuard::new(cfg, url);
+    // How much is left on THIS response: the server's Content-Length is exact for it (also for a
+    // resumed 206), so it works for files whose size the version JSON does not list (Fabric and Quilt
+    // libraries); otherwise fall back to the size we were given.
+    let remaining = resp.content_length().or_else(|| spec.size.map(|sz| sz.saturating_sub(if resumed { existing } else { 0 })));
+    let mut guard = RateGuard::new(cfg, url).with_eta(cfg, may_switch, remaining);
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         checkpoint(ctl, &mut guard).await?;
@@ -582,6 +664,7 @@ async fn segmented(
     cfg: &EngineConfig,
     spec: &FileSpec,
     url: &str,
+    may_switch: bool,
     part: &Path,
     ctl: &TaskCtl,
     tracker: &Arc<Tracker>,
@@ -597,7 +680,7 @@ async fn segmented(
     for range in ranges {
         let (client, cfg, url, part) = (client.clone(), cfg.clone(), url.to_string(), part.to_path_buf());
         let (ctl, counted, tracker) = (ctl.clone(), counted.clone(), tracker.clone());
-        set.spawn(async move { fetch_segment(&client, &cfg, &url, &part, range, &ctl, &tracker, &counted).await });
+        set.spawn(async move { fetch_segment(&client, &cfg, &url, may_switch, &part, range, &ctl, &tracker, &counted).await });
     }
     let mut result = Ok(());
     while let Some(r) = set.join_next().await {
@@ -621,6 +704,7 @@ async fn fetch_segment(
     client: &reqwest::Client,
     cfg: &EngineConfig,
     url: &str,
+    may_switch: bool,
     part: &Path,
     (s, e): (u64, u64),
     ctl: &TaskCtl,
@@ -631,13 +715,15 @@ async fn fetch_segment(
     let mut last = DlError::Other("segment not attempted".into());
     for attempt in 0..cfg.retries.max(1) {
         ctl.checkpoint().await?;
-        match segment_attempt(client, cfg, url, part, (s, e), &mut pos, ctl, tracker, counted).await {
+        match segment_attempt(client, cfg, url, may_switch, part, (s, e), &mut pos, ctl, tracker, counted).await {
             Ok(()) => return Ok(()),
             Err(DlError::Cancelled) => return Err(DlError::Cancelled),
             // The server ignores Range: the caller falls back to one plain connection.
             Err(DlError::Other(m)) if m == "no-range" => return Err(DlError::Other(m)),
             Err(err) => {
-                if is_permanent(&err) {
+                // A slow segment means this origin is slow for the whole file: stop all segments and let
+                // the caller pick another origin instead of retrying here.
+                if err.is_permanent() || matches!(err, DlError::TooSlow { .. } | DlError::NoAnswer { .. }) {
                     return Err(err);
                 }
                 tracing::warn!(attempt = attempt + 1, resume_at = pos, "segment {s}-{e} of {url} failed: {err}");
@@ -655,6 +741,7 @@ async fn segment_attempt(
     client: &reqwest::Client,
     cfg: &EngineConfig,
     url: &str,
+    may_switch: bool,
     part: &Path,
     (s, e): (u64, u64),
     pos: &mut u64,
@@ -663,14 +750,14 @@ async fn segment_attempt(
     counted: &Arc<AtomicU64>,
 ) -> DlResult<()> {
     let _conn = Gauge::new(&tracker.active_conns);
-    let resp = client.get(url).header("Range", format!("bytes={}-{e}", *pos)).send().await?;
+    let resp = send(client.get(url).header("Range", format!("bytes={}-{e}", *pos)), cfg, url, may_switch).await?;
     let resp = check_status(resp, url).await?;
     if resp.status().as_u16() != 206 {
         return Err(DlError::Other("no-range".into()));
     }
     let mut f = tokio::fs::OpenOptions::new().write(true).open(part).await?;
     f.seek(std::io::SeekFrom::Start(*pos)).await?;
-    let mut guard = RateGuard::new(cfg, url);
+    let mut guard = RateGuard::new(cfg, url).with_eta(cfg, may_switch, Some(e + 1 - *pos));
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         checkpoint(ctl, &mut guard).await?;
