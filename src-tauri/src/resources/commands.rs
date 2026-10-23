@@ -1,8 +1,15 @@
 //! Tauri commands for resource platforms and local mods. See docs/api/resources.md.
 use super::local_mods::{self, LocalMod, ModUpdate};
 use super::types::*;
-use super::{curseforge, modrinth, Result};
-use std::path::PathBuf;
+use super::{Result, curseforge, modrinth};
+use crate::settings::guard;
+use std::path::{Path, PathBuf};
+
+/// `<registered root>/...` only. The mods folder comes from the webview, so it must not
+/// be able to point the scanner (which reads and hashes every jar) at arbitrary folders.
+fn checked(dir: &str) -> Result<PathBuf> {
+    guard::confine_to_registered(Path::new(dir))
+}
 
 #[tauri::command]
 pub async fn resource_search(platform: Platform, kind: ResourceKind, query: SearchQuery) -> Result<SearchResult> {
@@ -40,14 +47,13 @@ pub async fn curseforge_download_url(mod_id: String, file_id: u64, file_name: St
 
 #[tauri::command]
 pub async fn local_mods_scan(mods_dir: String) -> Result<Vec<LocalMod>> {
-    tauri::async_runtime::spawn_blocking(move || local_mods::scan_mods_dir(&PathBuf::from(mods_dir)))
-        .await
-        .map_err(|e| e.to_string())?
+    let dir = checked(&mods_dir)?;
+    tauri::async_runtime::spawn_blocking(move || local_mods::scan_mods_dir(&dir)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub fn local_mod_set_enabled(path: String, enabled: bool) -> Result<String> {
-    local_mods::set_mod_enabled(&PathBuf::from(path), enabled).map(|p| p.to_string_lossy().to_string())
+    local_mods::set_mod_enabled(&checked(&path)?, enabled).map(|p| p.to_string_lossy().to_string())
 }
 
 #[tauri::command]

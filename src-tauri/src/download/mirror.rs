@@ -8,6 +8,9 @@ pub enum Source {
     #[default]
     Official,
     Bmcl,
+    /// Official URL first, the BMCLAPI mirror only as fallback.
+    #[serde(rename = "officialfirst")]
+    OfficialFirst,
 }
 
 const BMCL: &str = "https://bmclapi2.bangbang93.com";
@@ -42,6 +45,7 @@ pub fn to_mirror(url: &str) -> Option<String> {
 pub fn candidates(url: &str, source: Source) -> Vec<String> {
     match (source, to_mirror(url)) {
         (Source::Bmcl, Some(m)) => vec![m, url.to_string()],
+        (Source::OfficialFirst, Some(m)) => vec![url.to_string(), m],
         _ => vec![url.to_string()],
     }
 }
@@ -60,10 +64,7 @@ mod tests {
             to_mirror("https://resources.download.minecraft.net/ab/abcdef").unwrap(),
             "https://bmclapi2.bangbang93.com/assets/ab/abcdef"
         );
-        assert_eq!(
-            to_mirror("https://libraries.minecraft.net/a/b/c.jar").unwrap(),
-            "https://bmclapi2.bangbang93.com/maven/a/b/c.jar"
-        );
+        assert_eq!(to_mirror("https://libraries.minecraft.net/a/b/c.jar").unwrap(), "https://bmclapi2.bangbang93.com/maven/a/b/c.jar");
         assert_eq!(
             to_mirror("https://maven.neoforged.net/releases/net/neoforged/x.jar").unwrap(),
             "https://bmclapi2.bangbang93.com/maven/net/neoforged/x.jar"
@@ -89,5 +90,8 @@ mod tests {
         assert!(c[0].starts_with("https://bmclapi2"));
         assert_eq!(c[1], u);
         assert_eq!(candidates("https://x.org/a", Source::Bmcl).len(), 1);
+        let o = candidates(u, Source::OfficialFirst);
+        assert_eq!(o[0], u);
+        assert!(o[1].starts_with("https://bmclapi2"));
     }
 }

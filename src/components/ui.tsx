@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import { CheckCircle2, Info, XCircle, X } from "lucide-react";
 import { useUi } from "../store/ui";
 import { t } from "../i18n";
@@ -70,14 +71,22 @@ export function ProgressBar({ value, label }: { value: number; label: string }) 
 }
 
 /** Modal dialog: focus trap-lite (focus on open, restore on close), Esc closes. */
-export function Dialog({ title, onClose, children, actions }: { title: string; onClose(): void; children: ReactNode; actions?: ReactNode }) {
+export function Dialog({ title, onClose, children, actions, dismissable = true }: { title: string; onClose(): void; children: ReactNode; actions?: ReactNode; dismissable?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
-    ref.current?.querySelector<HTMLElement>("input, button, select, textarea")?.focus();
+    // Start in the first form field. Tab-like buttons (e.g. the account type switcher) come before it
+    // in the DOM, so a plain "first focusable" would leave the cursor on a button. Dialogs without
+    // fields (confirmations) still start on their first button.
+    const el = ref.current;
+    (el?.querySelector<HTMLElement>("[data-autofocus]") ??
+      el?.querySelector<HTMLElement>("input:not([type=hidden]):not(:disabled), textarea:not(:disabled), select:not(:disabled)") ??
+      el?.querySelector<HTMLElement>("button:not(:disabled)"))?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && dismissable) closeRef.current();
       if (e.key === "Tab" && ref.current) {
         const f = ref.current.querySelectorAll<HTMLElement>("input, button, select, textarea, a[href]");
         if (!f.length) return;
@@ -88,9 +97,9 @@ export function Dialog({ title, onClose, children, actions }: { title: string; o
     };
     document.addEventListener("keydown", onKey);
     return () => { document.removeEventListener("keydown", onKey); prev?.focus(); };
-  }, [onClose]);
+  }, [dismissable]);
   return createPortal(
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="overlay" onMouseDown={(e) => dismissable && e.target === e.currentTarget && closeRef.current()}>
       <div className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={ref}>
         <h2 id={titleId}>{title}</h2>
         {children}
@@ -121,12 +130,14 @@ export function ConfirmDialog({ title, message, danger, onConfirm, onClose }: { 
 export function Toasts() {
   const toasts = useUi((s) => s.toasts);
   const dismiss = useUi((s) => s.dismissToast);
+  const nav = useNavigate();
   return (
     <div className="toasts" role="status" aria-live="polite">
       {toasts.map((x) => (
         <div key={x.id} className={`toast ${x.kind}`}>
           {x.kind === "success" ? <CheckCircle2 size={18} /> : x.kind === "error" ? <XCircle size={18} /> : <Info size={18} />}
-          <span className="grow">{x.text}</span>
+          <span className="grow selectable">{x.text}</span>
+          {x.action && <button className="btn" style={{ padding: "4px 10px" }} onClick={() => { nav(x.action!.route); dismiss(x.id); }}>{x.action.label}</button>}
           <button className="btn ghost" style={{ padding: 2 }} aria-label={t("common.close")} onClick={() => dismiss(x.id)}><X size={14} /></button>
         </div>
       ))}
@@ -134,6 +145,21 @@ export function Toasts() {
   );
 }
 
-export function Empty({ text }: { text: string }) {
-  return <p className="dim" style={{ textAlign: "center", padding: 24 }}>{text}</p>;
+export function Empty({ text, action }: { text: string; action?: ReactNode }) {
+  return (
+    <div style={{ textAlign: "center", padding: 24 }}>
+      <p className="dim" style={{ margin: 0 }}>{text}</p>
+      {action && <div style={{ marginTop: 10 }}>{action}</div>}
+    </div>
+  );
+}
+
+/** Failed list load: message plus retry. */
+export function LoadError({ text, onRetry }: { text: string; onRetry(): void }) {
+  return <Empty text={text} action={<Button onClick={onRetry}>{t("common.retry")}</Button>} />;
+}
+
+/** Spinner-less loading placeholder with a polite live region. */
+export function Loading() {
+  return <p className="dim" role="status" style={{ textAlign: "center", padding: 24, margin: 0 }}>{t("common.loading")}</p>;
 }

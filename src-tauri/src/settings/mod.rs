@@ -7,10 +7,10 @@
 //! Derived from Plain Craft Launcher 2 (see LICENCE in repo root).
 
 pub mod commands;
+pub mod guard;
 pub mod instance_settings;
 pub mod model;
 pub mod store;
 
 pub use instance_settings::InstanceSettings;
 pub use model::*;
-

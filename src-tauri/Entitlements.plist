@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the hardened runtime (direct distribution, Developer ID + notarization).
+
+  Deliberately empty. What is NOT needed, and why:
+  - com.apple.security.cs.allow-jit / allow-unsigned-executable-memory: JavaScriptCore's JIT runs in
+    Apple's own WebContent process (WKWebView), not in this app. The game's JVM is a separate
+    child process with its own signature, so the parent's hardened runtime does not restrict it.
+  - com.apple.security.cs.disable-library-validation: this app loads no third-party dylibs.
+  - com.apple.security.network.client: only relevant inside the App Sandbox, which a launcher
+    cannot use (it spawns Java and writes to ~/Library/Application Support/minecraft).
+  - com.apple.security.app-sandbox: see above.
+  Add a key here only together with the code change that needs it, and explain it in this comment.
+-->
+<plist version="1.0">
+<dict/>
+</plist>

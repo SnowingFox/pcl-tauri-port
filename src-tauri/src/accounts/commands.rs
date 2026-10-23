@@ -1,21 +1,25 @@
 //! Tauri command surface. See docs/api/accounts.md.
 use super::manager::AccountManager;
 use super::secrets::KeychainStore;
-use super::{yggdrasil, AccountError, AccountInfo, AuthSession};
+use super::{AccountError, AccountInfo, SessionSummary, yggdrasil};
 use std::sync::{Arc, OnceLock};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 static MANAGER: OnceLock<AccountManager> = OnceLock::new();
 
 pub const EVENT_DEVICE_CODE: &str = "accounts://device-code";
 
-fn mgr(app: &AppHandle) -> Result<&'static AccountManager, AccountError> {
+/// The process-wide account manager (state lives in the app data dir shared with settings).
+pub fn manager() -> Result<&'static AccountManager, AccountError> {
     if let Some(m) = MANAGER.get() {
         return Ok(m);
     }
-    let dir = app.path().app_data_dir().map_err(|e| AccountError::Io(e.to_string()))?;
-    let m = AccountManager::new(dir, Arc::new(KeychainStore))?;
+    let m = AccountManager::new(crate::settings::store::data_dir(), Arc::new(KeychainStore))?;
     Ok(MANAGER.get_or_init(|| m))
+}
+
+fn mgr(_app: &AppHandle) -> Result<&'static AccountManager, AccountError> {
+    manager()
 }
 
 type R<T> = Result<T, AccountError>;
@@ -94,10 +98,13 @@ pub async fn accounts_add_yggdrasil(app: AppHandle, server: String, identifier: 
     mgr(&app)?.add_yggdrasil(&server, &identifier, &password).await
 }
 
-/// Launch credentials (refreshes tokens). Rust callers may use `AccountManager::session` directly.
+/// Refreshes the account's tokens and returns a token-free summary. The access and client
+/// tokens never cross the IPC boundary: the launch pipeline calls `AccountManager::session`
+/// in Rust.
 #[tauri::command]
-pub async fn accounts_get_session(app: AppHandle, id: String) -> R<AuthSession> {
-    mgr(&app)?.session(&id).await
+pub async fn accounts_get_session(app: AppHandle, id: String) -> R<SessionSummary> {
+    let s = mgr(&app)?.session(&id).await?;
+    Ok(SessionSummary::from(&s))
 }
 
 /// Skin PNG as a `data:` URL, or null.

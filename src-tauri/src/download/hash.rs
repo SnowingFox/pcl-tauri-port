@@ -13,6 +13,7 @@ pub enum HashKind {
 }
 
 /// Hex digest of an in-memory buffer.
+#[cfg(test)]
 pub fn hex_of(kind: HashKind, bytes: &[u8]) -> String {
     match kind {
         HashKind::Sha1 => hex::encode(Sha1::digest(bytes)),
@@ -22,9 +23,7 @@ pub fn hex_of(kind: HashKind, bytes: &[u8]) -> String {
 
 /// Hex digest of a file, computed on a blocking thread.
 pub async fn file_hash(kind: HashKind, path: PathBuf) -> std::io::Result<String> {
-    tokio::task::spawn_blocking(move || file_hash_sync(kind, &path))
-        .await
-        .map_err(|e| std::io::Error::other(e.to_string()))?
+    tokio::task::spawn_blocking(move || file_hash_sync(kind, &path)).await.map_err(|e| std::io::Error::other(e.to_string()))?
 }
 
 pub fn file_hash_sync(kind: HashKind, path: &Path) -> std::io::Result<String> {
@@ -63,10 +62,7 @@ mod tests {
     #[test]
     fn known_vectors() {
         assert_eq!(hex_of(HashKind::Sha1, b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
-        assert_eq!(
-            hex_of(HashKind::Sha256, b"abc"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
+        assert_eq!(hex_of(HashKind::Sha256, b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     }
 
     #[tokio::test]
@@ -74,13 +70,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("f");
         std::fs::write(&p, b"hello world").unwrap();
-        assert_eq!(
-            file_hash(HashKind::Sha1, p.clone()).await.unwrap(),
-            hex_of(HashKind::Sha1, b"hello world")
-        );
-        assert_eq!(
-            file_hash(HashKind::Sha256, p).await.unwrap(),
-            hex_of(HashKind::Sha256, b"hello world")
-        );
+        assert_eq!(file_hash(HashKind::Sha1, p.clone()).await.unwrap(), hex_of(HashKind::Sha1, b"hello world"));
+        assert_eq!(file_hash(HashKind::Sha256, p).await.unwrap(), hex_of(HashKind::Sha256, b"hello world"));
     }
 }

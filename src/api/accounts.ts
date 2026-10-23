@@ -1,19 +1,25 @@
 import { call, on, useMockApi } from "./runtime";
 import * as mock from "./mock/accounts";
-import type { Account, DeviceCode, MsLoginEvent } from "./types";
+import { toAccount, toDeviceCode } from "./adapters";
+import type { RawAccountInfo, RawDeviceCode } from "./raw";
+import type { Account, DeviceCode, YggdrasilServerInfo } from "./types";
 
 /** Single source of truth for command/event names of this domain. */
 export const ACCOUNT_CMD = {
   list: "accounts_list",
-  addOffline: "accounts_add_offline",
-  remove: "accounts_remove",
+  getSelected: "accounts_get_selected",
   select: "accounts_select",
-  selected: "accounts_selected",
-  msLoginStart: "accounts_ms_login_start",
-  msLoginCancel: "accounts_ms_login_cancel",
-  authlibLogin: "accounts_authlib_login",
+  remove: "accounts_remove",
+  addOffline: "accounts_add_offline",
+  microsoftLogin: "accounts_microsoft_login",
+  cancelLogin: "accounts_cancel_login",
+  serverInfo: "accounts_yggdrasil_server_info",
+  addYggdrasil: "accounts_add_yggdrasil",
+  getSkin: "accounts_get_skin",
+  getMsClientId: "accounts_get_ms_client_id",
+  setMsClientId: "accounts_set_ms_client_id",
 } as const;
-export const ACCOUNT_EVT = { msLogin: "accounts://ms-login" } as const;
+export const ACCOUNT_EVT = { deviceCode: "accounts://device-code" } as const;
 
 export interface AccountsApi {
   list(): Promise<Account[]>;
@@ -21,23 +27,39 @@ export interface AccountsApi {
   addOffline(name: string): Promise<Account>;
   remove(id: string): Promise<void>;
   select(id: string): Promise<void>;
-  msLoginStart(): Promise<DeviceCode>;
-  msLoginCancel(): Promise<void>;
-  authlibLogin(server: string, username: string, password: string): Promise<Account>;
-  onMsLogin(cb: (e: MsLoginEvent) => void): Promise<() => void>;
+  /**
+   * Starts the Microsoft device-code flow. Resolves once the user finished signing in;
+   * rejects (CANCELLED, DEVICE_CODE_EXPIRED, DECLINED, NOT_OWNED, ...) otherwise.
+   * The code to show arrives through `onDeviceCode` while this promise is pending.
+   */
+  microsoftLogin(): Promise<Account>;
+  cancelLogin(): Promise<void>;
+  onDeviceCode(cb: (c: DeviceCode) => void): Promise<() => void>;
+  serverInfo(url: string): Promise<YggdrasilServerInfo>;
+  /** one account per profile the user owns on that server */
+  addYggdrasil(server: string, identifier: string, password: string): Promise<Account[]>;
+  /** png data url, or null */
+  skin(id: string): Promise<string | null>;
+  msClientId(): Promise<string | null>;
+  setMsClientId(id: string | null): Promise<void>;
 }
 
-const real: AccountsApi = {
-  list: () => call(ACCOUNT_CMD.list),
-  selected: () => call(ACCOUNT_CMD.selected),
-  addOffline: (name) => call(ACCOUNT_CMD.addOffline, { name }),
+/** The real (Tauri) implementation; exported for contract tests. */
+export const realAccountsApi: AccountsApi = {
+  list: async () => (await call<RawAccountInfo[]>(ACCOUNT_CMD.list)).map(toAccount),
+  selected: () => call(ACCOUNT_CMD.getSelected),
+  addOffline: async (name) => toAccount(await call<RawAccountInfo>(ACCOUNT_CMD.addOffline, { name })),
   remove: (id) => call(ACCOUNT_CMD.remove, { id }),
   select: (id) => call(ACCOUNT_CMD.select, { id }),
-  msLoginStart: () => call(ACCOUNT_CMD.msLoginStart),
-  msLoginCancel: () => call(ACCOUNT_CMD.msLoginCancel),
-  authlibLogin: (server, username, password) =>
-    call(ACCOUNT_CMD.authlibLogin, { server, username, password }),
-  onMsLogin: (cb) => on<MsLoginEvent>(ACCOUNT_EVT.msLogin, cb),
+  microsoftLogin: async () => toAccount(await call<RawAccountInfo>(ACCOUNT_CMD.microsoftLogin)),
+  cancelLogin: () => call(ACCOUNT_CMD.cancelLogin),
+  onDeviceCode: (cb) => on<RawDeviceCode>(ACCOUNT_EVT.deviceCode, (p) => cb(toDeviceCode(p))),
+  serverInfo: (url) => call(ACCOUNT_CMD.serverInfo, { url }),
+  addYggdrasil: async (server, identifier, password) =>
+    (await call<RawAccountInfo[]>(ACCOUNT_CMD.addYggdrasil, { server, identifier, password })).map(toAccount),
+  skin: (id) => call(ACCOUNT_CMD.getSkin, { id }),
+  msClientId: () => call(ACCOUNT_CMD.getMsClientId),
+  setMsClientId: (clientId) => call(ACCOUNT_CMD.setMsClientId, { clientId }),
 };
 
-export const accountsApi: AccountsApi = useMockApi ? mock.accountsMock : real;
+export const accountsApi: AccountsApi = useMockApi ? mock.accountsMock : realAccountsApi;

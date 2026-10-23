@@ -177,7 +177,9 @@ impl<'a> Analyzer<'a> {
             if c("Maybe try a lower resolution resourcepack?") {
                 self.flag(Reason::TextureTooLarge);
             }
-            if c("java.lang.NoSuchMethodError: net.minecraft.world.server.ChunkManager$ProxyTicketManager.shouldForceTicks(J)Z") && c("OptiFine") {
+            if c("java.lang.NoSuchMethodError: net.minecraft.world.server.ChunkManager$ProxyTicketManager.shouldForceTicks(J)Z")
+                && c("OptiFine")
+            {
                 self.flag(Reason::OptiFineWorldLoad);
             }
             if c("com.electronwill.nightconfig.core.io.ParsingException: Not enough data available")
@@ -194,10 +196,13 @@ impl<'a> Analyzer<'a> {
             if c("Invalid module name: '' is not a Java identifier") {
                 self.flag(Reason::ModNameSpecialChars);
             }
-            if c("has been compiled by a more recent version of the Java Runtime (class file version 55.0), this version of the Java Runtime only recognizes class file versions up to")
-                || c("java.lang.RuntimeException: java.lang.NoSuchMethodException: no such method: sun.misc.Unsafe.defineAnonymousClass(Class,byte[],Object[])Class/invokeVirtual")
-                || c("java.lang.IllegalArgumentException: The requested compatibility level JAVA_11 could not be set. Level is not supported by the active JRE or ASM version")
-            {
+            if c(
+                "has been compiled by a more recent version of the Java Runtime (class file version 55.0), this version of the Java Runtime only recognizes class file versions up to",
+            ) || c(
+                "java.lang.RuntimeException: java.lang.NoSuchMethodException: no such method: sun.misc.Unsafe.defineAnonymousClass(Class,byte[],Object[])Class/invokeVirtual",
+            ) || c(
+                "java.lang.IllegalArgumentException: The requested compatibility level JAVA_11 could not be set. Level is not supported by the active JRE or ASM version",
+            ) {
                 self.flag(Reason::ModNeedsJava11);
             }
             if c("Unsupported class file major version")
@@ -235,8 +240,8 @@ impl<'a> Analyzer<'a> {
             }
             if c("Incompatible mods found!") {
                 let raw = seek(m, r"Incompatible mods found![\s\S]+?: ([\s\S]+?)\tat ").unwrap_or_default();
-                let cleaned = before_first(&raw, "更多信息：")
-                    .replace("Some of your mods are incompatible with the game or each other!", "");
+                let cleaned =
+                    before_first(&raw, "更多信息：").replace("Some of your mods are incompatible with the game or each other!", "");
                 self.add1(Reason::ModIncompatible, trim_crlf_space(&cleaned));
             }
             if c("Missing or unsupported mandatory dependencies:") {
@@ -263,10 +268,7 @@ impl<'a> Analyzer<'a> {
             if c("incompatible architecture") || c("mach-o file, but is an incompatible architecture") {
                 self.flag(Reason::MacArchMismatch);
             }
-            if c("Unable to locate a Java Runtime")
-                || c("No Java runtime present")
-                || c("java: command not found")
-                || c("无法找到 Java")
+            if c("Unable to locate a Java Runtime") || c("No Java runtime present") || c("java: command not found") || c("无法找到 Java")
             {
                 self.flag(Reason::JavaMissing);
             }
@@ -336,11 +338,7 @@ impl<'a> Analyzer<'a> {
         }
         let modid = seek(crash, r"Failed loading config file .+ for modid ([^\n]+)").unwrap_or_default();
         let cfg = seek(crash, r"Failed loading config file (.+) of type").unwrap_or_default();
-        let name = self
-            .try_mod_name(modid.trim_matches(|c| c == '\r' || c == '\n'))
-            .into_iter()
-            .next()
-            .unwrap_or_default();
+        let name = self.try_mod_name(modid.trim_matches(|c| c == '\r' || c == '\n')).into_iter().next().unwrap_or_default();
         let cfg = cfg.trim_matches(|c| c == '\r' || c == '\n').to_string();
         self.add(Reason::ModConfigBroken, vec![name, cfg]);
     }
@@ -389,8 +387,7 @@ impl<'a> Analyzer<'a> {
                 if m.contains(marker) {
                     let pat = format!(r"{}\n((?:\s+ - [^\n]+\n)+)", regex::escape(marker));
                     let block = seek(m, &pat).unwrap_or_default();
-                    let lines: Vec<String> =
-                        block.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+                    let lines: Vec<String> = block.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
                     self.add1(Reason::FabricSolution, lines.join("\n"));
                 }
             }
@@ -419,11 +416,7 @@ impl<'a> Analyzer<'a> {
     fn crit3(&mut self) {
         let logs = self.logs;
         if let Some(m) = &logs.mc {
-            if !(m.contains("at net.") || m.contains("INFO]"))
-                && logs.hs.is_none()
-                && logs.crash.is_none()
-                && m.chars().count() < 100
-            {
+            if !(m.contains("at net.") || m.contains("INFO]")) && logs.hs.is_none() && logs.crash.is_none() && m.chars().count() < 100 {
                 self.add1(Reason::TinyOutput, m.clone());
             }
             if m.contains("Mod resolution failed") {
@@ -446,7 +439,7 @@ impl<'a> Analyzer<'a> {
             if cr.contains("\tEntity's Exact location: ") {
                 let t = seek(cr, r"\tEntity Type: ([^\n]+) \(").unwrap_or_default();
                 let l = seek(cr, r"\tEntity's Exact location: ([^\n]+)").unwrap_or_default();
-                self.add1(Reason::EntityCrash, format!("{t} ({})", l.trim_end_matches(|c| c == '\r' || c == '\n')));
+                self.add1(Reason::EntityCrash, format!("{t} ({})", l.trim_end_matches(['\r', '\n'])));
             }
         }
     }
@@ -483,11 +476,11 @@ impl<'a> Analyzer<'a> {
                 let fab = "Fabric Mods";
                 let mut start = crash.rfind(MARK).map(|i| i + MARK.len()).unwrap_or(0);
                 let mut is_fabric = false;
-                if let Some(i) = crash.rfind(fab) {
-                    if crash.contains(fab) {
-                        is_fabric = true;
-                        start = start.max(i + fab.len());
-                    }
+                if let Some(i) = crash.rfind(fab)
+                    && crash.contains(fab)
+                {
+                    is_fabric = true;
+                    start = start.max(i + fab.len());
                 }
                 let details = &crash[start..];
                 let lines: Vec<&str> = details
@@ -580,31 +573,140 @@ pub fn stack_keywords(stack: &str) -> Vec<String> {
     let found = dedup(found);
 
     const IGNORE: &[&str] = &[
-        "java", "sun", "javax", "jdk", "oolloo", "org.lwjgl", "com.sun", "net.minecraftforge", "paulscode.sound",
-        "com.mojang", "net.minecraft", "cpw.mods", "com.google", "org.apache", "org.spongepowered", "net.fabricmc",
-        "com.mumfrey", "com.electronwill.nightconfig", "it.unimi.dsi", "MojangTricksIntelDriversForPerformance_javaw",
+        "java",
+        "sun",
+        "javax",
+        "jdk",
+        "oolloo",
+        "org.lwjgl",
+        "com.sun",
+        "net.minecraftforge",
+        "paulscode.sound",
+        "com.mojang",
+        "net.minecraft",
+        "cpw.mods",
+        "com.google",
+        "org.apache",
+        "org.spongepowered",
+        "net.fabricmc",
+        "com.mumfrey",
+        "com.electronwill.nightconfig",
+        "it.unimi.dsi",
+        "MojangTricksIntelDriversForPerformance_javaw",
     ];
-    let possible: Vec<String> = found
-        .into_iter()
-        .filter(|s| !IGNORE.iter().any(|p| s.starts_with(p)))
-        .map(|s| s.trim().to_string())
-        .collect();
+    let possible: Vec<String> =
+        found.into_iter().filter(|s| !IGNORE.iter().any(|p| s.starts_with(p))).map(|s| s.trim().to_string()).collect();
     let possible = dedup(possible);
     if possible.is_empty() {
         return vec![];
     }
 
     const STOP: &[&str] = &[
-        "com", "org", "net", "asm", "fml", "mod", "jar", "sun", "lib", "map", "gui", "dev", "nio", "api", "dsi", "top",
-        "mcp", "core", "init", "mods", "main", "file", "game", "load", "read", "done", "util", "tile", "item", "base",
-        "fake", "oshi", "impl", "data", "pool", "task", "forge", "setup", "block", "model", "mixin", "event", "unimi",
-        "netty", "world", "lwjgl", "fakes", "fabric", "gitlab", "common", "server", "config", "mixins", "compat",
-        "loader", "launch", "script", "entity", "assist", "client", "plugin", "modapi", "mojang", "shader", "events",
-        "github", "recipe", "render", "packet", "preinit", "preload", "machine", "reflect", "channel", "general",
-        "handler", "content", "systems", "modules", "service", "scripts", "network", "fastutil", "optifine", "internal",
-        "platform", "override", "fabricmc", "neoforge", "external", "injection", "listeners", "scheduler", "minecraft",
-        "universal", "multipart", "neoforged", "microsoft", "transformer", "transformers", "minecraftforge",
-        "blockentity", "spongepowered", "electronwill", "concurrent",
+        "com",
+        "org",
+        "net",
+        "asm",
+        "fml",
+        "mod",
+        "jar",
+        "sun",
+        "lib",
+        "map",
+        "gui",
+        "dev",
+        "nio",
+        "api",
+        "dsi",
+        "top",
+        "mcp",
+        "core",
+        "init",
+        "mods",
+        "main",
+        "file",
+        "game",
+        "load",
+        "read",
+        "done",
+        "util",
+        "tile",
+        "item",
+        "base",
+        "fake",
+        "oshi",
+        "impl",
+        "data",
+        "pool",
+        "task",
+        "forge",
+        "setup",
+        "block",
+        "model",
+        "mixin",
+        "event",
+        "unimi",
+        "netty",
+        "world",
+        "lwjgl",
+        "fakes",
+        "fabric",
+        "gitlab",
+        "common",
+        "server",
+        "config",
+        "mixins",
+        "compat",
+        "loader",
+        "launch",
+        "script",
+        "entity",
+        "assist",
+        "client",
+        "plugin",
+        "modapi",
+        "mojang",
+        "shader",
+        "events",
+        "github",
+        "recipe",
+        "render",
+        "packet",
+        "preinit",
+        "preload",
+        "machine",
+        "reflect",
+        "channel",
+        "general",
+        "handler",
+        "content",
+        "systems",
+        "modules",
+        "service",
+        "scripts",
+        "network",
+        "fastutil",
+        "optifine",
+        "internal",
+        "platform",
+        "override",
+        "fabricmc",
+        "neoforge",
+        "external",
+        "injection",
+        "listeners",
+        "scheduler",
+        "minecraft",
+        "universal",
+        "multipart",
+        "neoforged",
+        "microsoft",
+        "transformer",
+        "transformers",
+        "minecraftforge",
+        "blockentity",
+        "spongepowered",
+        "electronwill",
+        "concurrent",
     ];
     let mut words: Vec<String> = vec![];
     for st in &possible {

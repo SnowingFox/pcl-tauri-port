@@ -9,7 +9,7 @@ All commands return a `task_id` string when they start work. Errors are returned
 ```
 { game_dir: string, source: "official" | "bmcl", concurrency: number, segments: number, retries: number }
 ```
-Default `game_dir`: `~/Library/Application Support/minecraft`. Config is in-memory; the lead/UI layer should persist it and call `download_set_config` at startup. A task snapshots the config when it starts.
+Default `game_dir`: `~/Library/Application Support/minecraft`. The config is derived from the persisted settings (`download.*`, selected Minecraft folder) at startup and after every settings change; `download_set_config` writes through to the settings (see `app.md`). A task snapshots the config when it starts. `source` also accepts `"officialfirst"` (official URL first, BMCLAPI as fallback).
 
 With `source: "bmcl"`, known Mojang/Forge/Fabric/Quilt/NeoForge URLs are rewritten to bmclapi2.bangbang93.com and the original URL is kept as fallback.
 

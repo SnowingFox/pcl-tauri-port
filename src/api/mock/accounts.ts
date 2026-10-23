@@ -1,10 +1,12 @@
 import type { AccountsApi } from "../accounts";
-import type { Account } from "../types";
+import type { Account, DeviceCode } from "../types";
+import { AppError } from "../errors";
 import { delay, mockEmit, mockOn, uid } from "./bus";
 
 const accounts: Account[] = [];
 let selected: string | null = null;
-let cancelled = false;
+let cancel: (() => void) | null = null;
+let clientId: string | null = null;
 
 function fakeUuid(name: string): string {
   let h = 0;
@@ -16,8 +18,16 @@ function fakeUuid(name: string): string {
 export function resetAccountsMock(): void {
   accounts.length = 0;
   selected = null;
-  cancelled = false;
+  cancel = null;
+  clientId = null;
 }
+
+export const mockDeviceCode: DeviceCode = {
+  userCode: "A1B2C3D4",
+  verificationUri: "https://www.microsoft.com/link",
+  expiresIn: 900,
+  interval: 5,
+};
 
 export const accountsMock: AccountsApi = {
   async list() {
@@ -29,7 +39,7 @@ export const accountsMock: AccountsApi = {
   },
   async addOffline(name) {
     await delay();
-    if (!/^\w{3,16}$/.test(name)) throw new Error("invalid_name");
+    if (!/^\w{1,16}$/.test(name)) throw new AppError("INVALID_ARGUMENT", "invalid input: name");
     const acc: Account = { id: uid("acc"), kind: "offline", name, uuid: fakeUuid(name) };
     accounts.push(acc);
     selected ??= acc.id;
@@ -42,40 +52,48 @@ export const accountsMock: AccountsApi = {
     if (selected === id) selected = accounts[0]?.id ?? null;
   },
   async select(id) {
-    if (!accounts.some((a) => a.id === id)) throw new Error("not_found");
+    if (!accounts.some((a) => a.id === id)) throw new AppError("ACCOUNT_NOT_FOUND", "account not found");
     selected = id;
   },
-  async msLoginStart() {
-    await delay();
-    cancelled = false;
-    setTimeout(() => {
-      if (cancelled) return;
-      mockEmit("accounts://ms-login", { state: "pending" });
-      setTimeout(() => {
-        if (cancelled) return;
+  microsoftLogin() {
+    return new Promise<Account>((resolve, reject) => {
+      cancel = () => reject(new AppError("CANCELLED", "login was cancelled"));
+      setTimeout(() => mockEmit("accounts://device-code", mockDeviceCode), 150);
+      const t = setTimeout(() => {
+        cancel = null;
         const acc: Account = { id: uid("acc"), kind: "microsoft", name: "Steve_MS", uuid: fakeUuid("Steve_MS") };
         accounts.push(acc);
         selected = acc.id;
-        mockEmit("accounts://ms-login", { state: "success", account: acc });
+        resolve({ ...acc });
       }, 2500);
-    }, 200);
-    return {
-      userCode: "A1B2C3D4",
-      verificationUri: "https://www.microsoft.com/link",
-      expiresIn: 900,
-      interval: 5,
-    };
+      const prev = cancel;
+      cancel = () => { clearTimeout(t); prev?.(); };
+    });
   },
-  async msLoginCancel() {
-    cancelled = true;
+  async cancelLogin() {
+    cancel?.();
+    cancel = null;
   },
-  async authlibLogin(server, username, password) {
+  onDeviceCode: (cb) => mockOn("accounts://device-code", cb),
+  async serverInfo(url) {
     await delay();
-    if (!password) throw new Error("bad_credentials");
-    const acc: Account = { id: uid("acc"), kind: "authlib", name: username, uuid: fakeUuid(username), server };
+    return { url: url.startsWith("http") ? url : `https://${url}`, name: "Mock Yggdrasil" };
+  },
+  async addYggdrasil(server, identifier, password) {
+    await delay();
+    if (!password) throw new AppError("INVALID_ARGUMENT", "invalid input: password");
+    const acc: Account = { id: uid("acc"), kind: "authlib", name: identifier, uuid: fakeUuid(identifier), server, serverName: "Mock Yggdrasil" };
     accounts.push(acc);
     selected = acc.id;
-    return { ...acc };
+    return [{ ...acc }];
   },
-  onMsLogin: (cb) => mockOn("accounts://ms-login", cb),
+  async skin() {
+    return null;
+  },
+  async msClientId() {
+    return clientId;
+  },
+  async setMsClientId(id) {
+    clientId = id;
+  },
 };

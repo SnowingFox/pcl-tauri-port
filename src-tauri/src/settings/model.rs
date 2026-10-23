@@ -1,19 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 /// Bump when the on-disk layout changes and add a step in `store::migrate`.
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct McFolderEntry {
     pub name: String,
     pub path: String,
-}
-
-impl Default for McFolderEntry {
-    fn default() -> Self {
-        Self { name: String::new(), path: String::new() }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -114,7 +109,8 @@ pub struct GameSettings {
     pub custom_info: String,
 }
 
-pub const DEFAULT_JVM_ARGS: &str = "-XX:-OmitStackTraceInFastThrow -Dfml.ignoreInvalidMinecraftCertificates=True -Dfml.ignorePatchDiscrepancies=True";
+pub const DEFAULT_JVM_ARGS: &str =
+    "-XX:-OmitStackTraceInFastThrow -Dfml.ignoreInvalidMinecraftCertificates=True -Dfml.ignorePatchDiscrepancies=True";
 
 impl Default for GameSettings {
     fn default() -> Self {
@@ -172,6 +168,10 @@ pub struct DownloadSettings {
     pub version_source: DownloadSource,
     pub mod_source: DownloadSource,
     pub thread_count: u32,
+    /// Parallel ranges per large file.
+    pub segments: u32,
+    /// Attempts per URL.
+    pub retries: u32,
     /// Bytes/sec cap, 0 = unlimited.
     pub speed_limit_bps: u64,
     pub validate_ssl: bool,
@@ -181,10 +181,15 @@ pub struct DownloadSettings {
 impl Default for DownloadSettings {
     fn default() -> Self {
         Self {
-            source: DownloadSource::MirrorFirst,
-            version_source: DownloadSource::MirrorFirst,
+            // Official first, BMCLAPI only as fallback. The mirror is a good fallback but a bad
+            // default: when it is slow it drags every download down (measured 0.9 MB/s vs 11 MB/s
+            // for the 1.21.4 asset set), whereas the official CDN is fast for most users.
+            source: DownloadSource::OfficialFirst,
+            version_source: DownloadSource::OfficialFirst,
             mod_source: DownloadSource::OfficialFirst,
             thread_count: 64,
+            segments: 4,
+            retries: 3,
             speed_limit_bps: 0,
             validate_ssl: true,
             translate_mod_names: true,
@@ -238,15 +243,7 @@ pub struct WindowSettings {
 
 impl Default for WindowSettings {
     fn default() -> Self {
-        Self {
-            width: 1000,
-            height: 618,
-            x: None,
-            y: None,
-            maximized: false,
-            remember_geometry: true,
-            button_style: WindowButtonStyle::Pcl,
-        }
+        Self { width: 1000, height: 618, x: None, y: None, maximized: false, remember_geometry: true, button_style: WindowButtonStyle::Pcl }
     }
 }
 
@@ -294,6 +291,8 @@ impl GlobalSettings {
     pub fn sanitize(&mut self) {
         self.memory.custom_mb = self.memory.custom_mb.clamp(512, 1 << 20);
         self.download.thread_count = self.download.thread_count.clamp(1, 256);
+        self.download.segments = self.download.segments.clamp(1, 16);
+        self.download.retries = self.download.retries.clamp(1, 10);
         self.ui.opacity = self.ui.opacity.min(1000);
         self.ui.hue = self.ui.hue.min(360);
         self.ui.saturation = self.ui.saturation.min(100);
@@ -314,12 +313,7 @@ impl GlobalSettings {
                 path: crate::settings::store::default_minecraft_dir().to_string_lossy().into_owned(),
             });
         }
-        let valid = self
-            .game
-            .selected_folder
-            .as_ref()
-            .map(|s| self.game.folders.iter().any(|f| &f.path == s))
-            .unwrap_or(false);
+        let valid = self.game.selected_folder.as_ref().map(|s| self.game.folders.iter().any(|f| &f.path == s)).unwrap_or(false);
         if !valid {
             self.game.selected_folder = self.game.folders.first().map(|f| f.path.clone());
         }

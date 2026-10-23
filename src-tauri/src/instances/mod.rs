@@ -8,4 +8,3 @@ pub mod commands;
 pub mod detect;
 pub mod ops;
 pub mod scan;
-

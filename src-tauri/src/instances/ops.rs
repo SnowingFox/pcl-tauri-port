@@ -10,10 +10,12 @@ use std::process::Command;
 fn version_dir(root: &Path, name: &str) -> Result<PathBuf, String> {
     validate_name(name)?;
     let d = root.join("versions").join(name);
-    if !d.is_dir() {
-        return Err(format!("未找到版本 {name}"));
+    // `symlink_metadata`: a symlinked version folder is neither renamed, copied nor exported.
+    match fs::symlink_metadata(&d) {
+        Ok(m) if m.is_dir() => Ok(d),
+        Ok(_) => Err(format!("{name} 不是普通的版本文件夹")),
+        Err(_) => Err(format!("未找到版本 {name}")),
     }
-    Ok(d)
 }
 
 fn rewrite_id(json_path: &Path, new_id: &str) -> Result<(), String> {
@@ -186,12 +188,9 @@ fn list_names(dir: &Path, only_ext: Option<&[&str]>) -> Vec<String> {
         .filter_map(|e| e.ok())
         .filter(|e| match only_ext {
             None => true,
-            Some(exts) => e
-                .path()
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(|x| exts.iter().any(|w| w.eq_ignore_ascii_case(x)))
-                .unwrap_or(false),
+            Some(exts) => {
+                e.path().extension().and_then(|x| x.to_str()).map(|x| exts.iter().any(|w| w.eq_ignore_ascii_case(x))).unwrap_or(false)
+            }
         })
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|n| !n.starts_with('.'))
@@ -224,10 +223,7 @@ pub fn export_info(root: &Path, name: &str, iso: IsolationMode) -> Result<Export
         shader_packs: list_names(&game.join("shaderpacks"), None),
         saves: list_names(&game.join("saves"), None),
         total_size_bytes: dir_size(&dir),
-        exported_at_unix: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        exported_at_unix: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
         instance: info,
         settings,
     })
@@ -292,6 +288,25 @@ mod tests {
         assert!(!r.join("versions/1.20.1").exists());
         assert!(delete_instance(r, "1.20.1", true).is_err());
         assert!(delete_instance(r, "../..", true).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_versions_are_not_touched() {
+        let d = setup();
+        let r = d.path();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "s").unwrap();
+        std::os::unix::fs::symlink(outside.path(), r.join("versions/link")).unwrap();
+        assert!(rename_instance(r, "link", "moved", IsolationMode::Off).is_err());
+        assert!(duplicate_instance(r, "link", "copy", IsolationMode::Off).is_err());
+        assert!(export_info(r, "link", IsolationMode::Off).is_err());
+        assert!(!r.join("versions/copy").exists() && !r.join("versions/moved").exists());
+        assert!(outside.path().join("secret.txt").exists());
+        // A symlink inside an instance is skipped by duplicate, not followed.
+        std::os::unix::fs::symlink(outside.path(), r.join("versions/1.20.1/escape")).unwrap();
+        duplicate_instance(r, "1.20.1", "copy", IsolationMode::Off).unwrap();
+        assert!(!r.join("versions/copy/escape").exists());
     }
 
     #[cfg(unix)]

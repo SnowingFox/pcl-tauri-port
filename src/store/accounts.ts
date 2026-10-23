@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { accountsApi, type Account } from "../api";
+import { markBought } from "../lib/counters";
 
 interface AccountsState {
   accounts: Account[];
@@ -9,8 +10,8 @@ interface AccountsState {
   select(id: string): Promise<void>;
   addOffline(name: string): Promise<Account>;
   remove(id: string): Promise<void>;
-  /** called when an external flow (MS / authlib) yields an account */
-  adopt(acc: Account): void;
+  /** called when an external flow (Microsoft / Yggdrasil) yields accounts; the first one becomes selected */
+  adopt(...acc: Account[]): Promise<void>;
   selected(): Account | undefined;
 }
 
@@ -20,7 +21,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
   loaded: false,
   async refresh() {
     const [accounts, selectedId] = await Promise.all([accountsApi.list(), accountsApi.selected()]);
-    set({ accounts, selectedId: selectedId ?? accounts[0]?.id ?? null, loaded: true });
+    set({ accounts, selectedId: accounts.some((a) => a.id === selectedId) ? selectedId : (accounts[0]?.id ?? null), loaded: true });
   },
   async select(id) {
     await accountsApi.select(id);
@@ -28,20 +29,19 @@ export const useAccounts = create<AccountsState>((set, get) => ({
   },
   async addOffline(name) {
     const acc = await accountsApi.addOffline(name);
-    await get().refresh();
-    set({ selectedId: acc.id });
-    await accountsApi.select(acc.id);
+    await get().adopt(acc);
     return acc;
   },
   async remove(id) {
     await accountsApi.remove(id);
     await get().refresh();
   },
-  adopt(acc) {
-    set((s) => ({
-      accounts: s.accounts.some((a) => a.id === acc.id) ? s.accounts : [...s.accounts, acc],
-      selectedId: acc.id,
-    }));
+  async adopt(...accs) {
+    if (!accs.length) return;
+    if (accs.some((a) => a.kind === "microsoft")) markBought();
+    await accountsApi.select(accs[0].id);
+    await get().refresh();
+    set({ selectedId: accs[0].id });
   },
   selected: () => get().accounts.find((a) => a.id === get().selectedId),
 }));

@@ -24,13 +24,9 @@ pub struct JavaInfo {
 /// "1.8.0_351" -> 8, "17.0.2" -> 17, "21" -> 21, "9-ea" -> 9, "25-beta" -> 25.
 pub fn parse_major(version: &str) -> Option<u32> {
     let v = version.trim().trim_matches('"');
-    let mut parts = v.split(|c: char| c == '.' || c == '_' || c == '-' || c == '+');
+    let mut parts = v.split(['.', '_', '-', '+']);
     let first: u32 = parts.next()?.parse().ok()?;
-    if first == 1 {
-        parts.next()?.parse().ok()
-    } else {
-        Some(first)
-    }
+    if first == 1 { parts.next()?.parse().ok() } else { Some(first) }
 }
 
 /// Extract the quoted version from `java -version` output.
@@ -69,13 +65,15 @@ pub fn binary_arch(path: &Path) -> Option<String> {
     let be = |o: usize| u32::from_be_bytes(buf[o..o + 4].try_into().unwrap());
     let le = |o: usize| u32::from_le_bytes(buf[o..o + 4].try_into().unwrap());
     match &buf[0..4] {
-        [0xCF, 0xFA, 0xED, 0xFE] | [0xCE, 0xFA, 0xED, 0xFE] => Some(match le(4) {
-            0x0100000C => "arm64",
-            0x01000007 => "x64",
-            7 => "x86",
-            _ => "unknown",
-        }
-        .into()),
+        [0xCF, 0xFA, 0xED, 0xFE] | [0xCE, 0xFA, 0xED, 0xFE] => Some(
+            match le(4) {
+                0x0100000C => "arm64",
+                0x01000007 => "x64",
+                7 => "x86",
+                _ => "unknown",
+            }
+            .into(),
+        ),
         // Fat/universal: report native arch if present, else first slice.
         [0xCA, 0xFE, 0xBA, 0xBE] => {
             let n = be(4).min(4) as usize;
@@ -97,14 +95,90 @@ pub fn binary_arch(path: &Path) -> Option<String> {
             let native = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
             Some(if archs.contains(&native) { native } else { archs[0] }.into())
         }
-        [0x7F, b'E', b'L', b'F'] => Some(match u16::from_le_bytes([buf[18], buf[19]]) {
-            0xB7 => "arm64",
-            0x3E => "x64",
-            0x03 => "x86",
-            _ => "unknown",
-        }
-        .into()),
+        [0x7F, b'E', b'L', b'F'] => Some(
+            match u16::from_le_bytes([buf[18], buf[19]]) {
+                0xB7 => "arm64",
+                0x3E => "x64",
+                0x03 => "x86",
+                _ => "unknown",
+            }
+            .into(),
+        ),
         _ => None,
+    }
+}
+
+/// Only a real Java launcher may be executed with arguments that come from the UI:
+/// the file must be named `java` (`java.exe` on Windows) and be a Mach-O / ELF binary.
+/// This keeps `java_inspect`, `launch_start` and `install_loader` from being turned into
+/// "run any program" primitives (`/bin/sh`, scripts, `rm`, ...).
+pub fn is_java_launcher(exe: &Path) -> bool {
+    #[cfg(test)]
+    if test_java::is_allowed(exe) {
+        return true;
+    }
+    let want = if cfg!(windows) { "java.exe" } else { "java" };
+    let named = |p: &Path| p.file_name().map(|n| n == want).unwrap_or(false);
+    // Both the given path and its symlink target must be called `java`, so a link named
+    // `java` that points at /bin/sh is refused.
+    named(exe) && exe.canonicalize().map(|c| named(&c) && c.is_file()).unwrap_or(false) && is_executable(exe) && binary_arch(exe).is_some()
+}
+
+/// Fake `java` shell scripts used by the app-level tests are not real binaries, so they would be
+/// refused. A test registers the exact path of its own script; any other path is judged normally.
+/// Not compiled into release builds.
+#[cfg(test)]
+pub(crate) mod test_java {
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static ALLOWED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+    pub fn allow(exe: &Path) {
+        let c = exe.canonicalize().expect("fake java exists");
+        let mut v = ALLOWED.lock().unwrap();
+        if !v.contains(&c) {
+            v.push(c);
+        }
+    }
+
+    pub fn is_allowed(exe: &Path) -> bool {
+        exe.canonicalize().map(|c| ALLOWED.lock().unwrap().contains(&c)).unwrap_or(false)
+    }
+}
+
+/// The launcher never sets the executable bit on anything it downloads or unzips, so a file
+/// fetched through `download_start_file` or a modpack can never pass as a Java launcher.
+fn is_executable(p: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        p.is_file()
+    }
+}
+
+/// Validate a user-supplied java executable path before it is executed.
+pub fn check_java_exe(path: &str) -> Result<(), String> {
+    if is_java_launcher(Path::new(path)) {
+        Ok(())
+    } else {
+        Err(format!("不是有效的 Java 可执行文件（必须是名为 java 的程序）：{path}"))
+    }
+}
+
+/// Like [`check_java_exe`] but also accepts a java home directory (`<home>/bin/java`),
+/// which is what settings and the file picker may hold.
+pub fn check_java_path(path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    let exe = if p.is_dir() { p.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" }) } else { p.to_path_buf() };
+    if is_java_launcher(&exe) {
+        Ok(())
+    } else {
+        Err(format!("不是有效的 Java（必须是名为 java 的程序，或包含 bin/java 的目录）：{path}"))
     }
 }
 
@@ -117,7 +191,7 @@ pub fn inspect(path: &Path) -> Option<JavaInfo> {
     } else {
         (path.to_path_buf(), path.join("bin").join(exe_name))
     };
-    if !exe.is_file() {
+    if !is_java_launcher(&exe) {
         return None;
     }
     let exe = exe.canonicalize().unwrap_or(exe);
@@ -126,10 +200,10 @@ pub fn inspect(path: &Path) -> Option<JavaInfo> {
     let mut version = release_value(&release, "JAVA_VERSION");
     let mut vendor = release_value(&release, "IMPLEMENTOR").unwrap_or_default();
     let mut arch = release_value(&release, "OS_ARCH").map(|a| normalize_arch(&a));
-    if let Some(a) = binary_arch(&exe) {
-        if a != "unknown" {
-            arch = Some(a);
-        }
+    if let Some(a) = binary_arch(&exe)
+        && a != "unknown"
+    {
+        arch = Some(a);
     }
     if version.is_none() {
         // The macOS /usr/bin/java stub may pop an installer dialog; callers filter it out.
@@ -165,9 +239,7 @@ pub fn parse_java_home_v(out: &str) -> Vec<PathBuf> {
 }
 
 fn children(dir: &Path) -> Vec<PathBuf> {
-    std::fs::read_dir(dir)
-        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
-        .unwrap_or_default()
+    std::fs::read_dir(dir).map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect()).unwrap_or_default()
 }
 
 /// Candidate java homes from well-known locations. `extra_dirs` may hold the
@@ -251,7 +323,7 @@ fn native_arch() -> &'static str {
 /// smallest newer one. Native-arch builds are preferred; x64 on arm64 (Rosetta)
 /// works but is only used if nothing else matches. Returns None if no
 /// installed Java has major >= required.
-pub fn select_for<'a>(javas: &'a [JavaInfo], required_major: u32) -> Option<&'a JavaInfo> {
+pub fn select_for(javas: &[JavaInfo], required_major: u32) -> Option<&JavaInfo> {
     let native = native_arch();
     javas
         .iter()
@@ -276,9 +348,15 @@ pub fn default_major_for_mc(mc: &str) -> u32 {
 }
 
 #[tauri::command]
-pub fn java_discover(extra_dirs: Option<Vec<String>>) -> Vec<JavaInfo> {
-    let dirs: Vec<PathBuf> = extra_dirs.unwrap_or_default().into_iter().map(PathBuf::from).collect();
-    discover(&dirs)
+pub fn java_discover(extra_dirs: Option<Vec<String>>) -> Result<Vec<JavaInfo>, String> {
+    // Extra search roots (e.g. `<mc>/runtime`) must lie inside a registered Minecraft folder:
+    // discovery lists directories and executes the `java` binaries it finds.
+    let dirs: Vec<PathBuf> = extra_dirs
+        .unwrap_or_default()
+        .iter()
+        .map(|d| crate::settings::guard::confine_to_registered(Path::new(d)))
+        .collect::<Result<_, _>>()?;
+    Ok(discover(&dirs))
 }
 
 /// Validate a user-supplied java executable or home.
@@ -292,7 +370,15 @@ mod tests {
     use super::*;
 
     fn j(major: u32, arch: &str) -> JavaInfo {
-        JavaInfo { path: format!("/j{major}{arch}/bin/java"), home: "/x".into(), version: major.to_string(), major, arch: arch.into(), vendor: "".into(), is_jdk: true }
+        JavaInfo {
+            path: format!("/j{major}{arch}/bin/java"),
+            home: "/x".into(),
+            version: major.to_string(),
+            major,
+            arch: arch.into(),
+            vendor: "".into(),
+            is_jdk: true,
+        }
     }
 
     #[test]
@@ -344,6 +430,44 @@ mod tests {
         } else {
             assert_eq!(select_for(&list, 17).unwrap().major, 21);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspect_refuses_non_java_executables() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        // A script named like a JVM that would print a plausible version if it were run.
+        let bin = d.path().join("evil/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let script = bin.join("java");
+        std::fs::write(&script, "#!/bin/sh\ntouch \"$(dirname \"$0\")/pwned\"\necho 'java version \"17.0.1\"' >&2\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(inspect(&script).is_none(), "script named java must not be executed");
+        assert!(inspect(&d.path().join("evil")).is_none());
+        assert!(!bin.join("pwned").exists(), "the script must not have run");
+        // A real binary that is not called java.
+        assert!(inspect(Path::new("/bin/sh")).is_none());
+        assert!(inspect(Path::new("/bin/ls")).is_none());
+        assert!(check_java_exe("/bin/sh").is_err());
+        assert!(check_java_exe("").is_err());
+        assert!(check_java_exe("../../bin/sh").is_err());
+        // A real Mach-O copied to a file called `java` passes the shape check (it is only run with -version).
+        let copy = d.path().join("ok/bin/java");
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        std::fs::copy("/bin/ls", &copy).unwrap();
+        assert!(is_java_launcher(&copy));
+        // Without the executable bit (everything the launcher writes itself) it is refused.
+        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!is_java_launcher(&copy));
+        assert!(inspect(&copy).is_none());
+        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A symlink called `java` that points at another program is refused.
+        let link = d.path().join("link/bin/java");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/bin/sh", &link).unwrap();
+        assert!(!is_java_launcher(&link));
+        assert!(inspect(&link).is_none());
     }
 
     #[test]

@@ -1,0 +1,4 @@
+# The codebase was written with wide lines (up to ~170 columns). These two settings match that
+# style closely, which keeps the one-time reformat small and diffs of other branches mergeable.
+max_width = 140
+use_small_heuristics = "Max"

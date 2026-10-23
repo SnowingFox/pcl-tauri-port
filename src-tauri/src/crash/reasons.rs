@@ -188,12 +188,16 @@ pub fn describe(reason: Reason, extra: &[String], log_all: &str) -> Described {
         }
         MixinBootstrapMissing => {
             actions.push(act("open_mods_folder", "打开 Mod 文件夹"));
-            "由于缺失 MixinBootstrap，导致游戏崩溃。\n请尝试安装 MixinBootstrap。若安装后依然崩溃，可以尝试在文件名前添加英文感叹号。".into()
+            "由于缺失 MixinBootstrap，导致游戏崩溃。\n请尝试安装 MixinBootstrap。若安装后依然崩溃，可以尝试在文件名前添加英文感叹号。"
+                .into()
         }
         ModMissingDependency => {
             actions.push(act("install_dependency", "安装缺失的前置 Mod"));
             if !extra.is_empty() {
-                format!("由于未安装正确的前置 Mod，导致游戏退出。\n缺失的依赖项：\n{}\n\n请根据上述信息进行对应处理，如果看不懂英文可以使用翻译软件。", list(extra))
+                format!(
+                    "由于未安装正确的前置 Mod，导致游戏退出。\n缺失的依赖项：\n{}\n\n请根据上述信息进行对应处理，如果看不懂英文可以使用翻译软件。",
+                    list(extra)
+                )
             } else {
                 share = true;
                 "由于未安装正确的前置 Mod，导致游戏退出。\n请根据错误报告中的日志信息进行对应处理，如果看不懂英文可以使用翻译软件。".into()
@@ -202,9 +206,15 @@ pub fn describe(reason: Reason, extra: &[String], log_all: &str) -> Described {
         StackKeywords => {
             share = true;
             if single {
-                format!("你的游戏遇到了一些问题，启动器为此找到了一个可疑的关键词：{}。\n\n如果你知道某个关键词对应的 Mod，那么有可能就是它引起的错误，你也可以查看错误报告获取详情。", extra[0])
+                format!(
+                    "你的游戏遇到了一些问题，启动器为此找到了一个可疑的关键词：{}。\n\n如果你知道某个关键词对应的 Mod，那么有可能就是它引起的错误，你也可以查看错误报告获取详情。",
+                    extra[0]
+                )
             } else {
-                format!("你的游戏遇到了一些问题，启动器为此找到了以下可疑的关键词：\n - {}\n\n如果你知道某个关键词对应的 Mod，那么有可能就是它引起的错误，你也可以查看错误报告获取详情。", extra.join(", "))
+                format!(
+                    "你的游戏遇到了一些问题，启动器为此找到了以下可疑的关键词：\n - {}\n\n如果你知道某个关键词对应的 Mod，那么有可能就是它引起的错误，你也可以查看错误报告获取详情。",
+                    extra.join(", ")
+                )
             }
         }
         StackModNames | ModSuspected => {
@@ -212,9 +222,15 @@ pub fn describe(reason: Reason, extra: &[String], log_all: &str) -> Described {
             view = true;
             actions.push(act("disable_mods", "禁用这些 Mod 后重试"));
             if single {
-                format!("启动器怀疑名为 {} 的 Mod 导致了游戏出错，但不能完全确定。\n你可以尝试禁用此 Mod，然后观察游戏是否还会崩溃。", extra[0])
+                format!(
+                    "启动器怀疑名为 {} 的 Mod 导致了游戏出错，但不能完全确定。\n你可以尝试禁用此 Mod，然后观察游戏是否还会崩溃。",
+                    extra[0]
+                )
             } else {
-                format!("启动器怀疑以下 Mod 导致了游戏出错，但不能完全确定：\n{}\n\n你可以尝试依次禁用上述 Mod，然后观察游戏是否还会崩溃。", list(extra))
+                format!(
+                    "启动器怀疑以下 Mod 导致了游戏出错，但不能完全确定：\n{}\n\n你可以尝试依次禁用上述 Mod，然后观察游戏是否还会崩溃。",
+                    list(extra)
+                )
             }
         }
         ModCertain => {
@@ -234,9 +250,15 @@ pub fn describe(reason: Reason, extra: &[String], log_all: &str) -> Described {
             if extra.is_empty() {
                 "部分 Mod 注入失败，导致游戏出错。\n这一般代表着部分 Mod 与其他 Mod 或当前环境不兼容，或是它存在 Bug。\n你可以尝试逐步禁用 Mod，然后观察游戏是否还会崩溃，以此定位导致崩溃的 Mod。".into()
             } else if single {
-                format!("名为 {} 的 Mod 注入失败，导致游戏出错。\n这一般代表着它与其他 Mod 或当前环境不兼容，或是它存在 Bug。\n你可以尝试禁用此 Mod，然后观察游戏是否还会崩溃。", extra[0])
+                format!(
+                    "名为 {} 的 Mod 注入失败，导致游戏出错。\n这一般代表着它与其他 Mod 或当前环境不兼容，或是它存在 Bug。\n你可以尝试禁用此 Mod，然后观察游戏是否还会崩溃。",
+                    extra[0]
+                )
             } else {
-                format!("以下 Mod 导致了游戏出错：\n{}\n这一般代表着它们与其他 Mod 或当前环境不兼容，或是它存在 Bug。\n你可以尝试依次禁用上述 Mod，然后观察游戏是否还会崩溃。", list(extra))
+                format!(
+                    "以下 Mod 导致了游戏出错：\n{}\n这一般代表着它们与其他 Mod 或当前环境不兼容，或是它存在 Bug。\n你可以尝试依次禁用上述 Mod，然后观察游戏是否还会崩溃。",
+                    list(extra)
+                )
             }
         }
         ModConfigBroken => {
@@ -263,7 +285,10 @@ pub fn describe(reason: Reason, extra: &[String], log_all: &str) -> Described {
         BlockCrash => {
             share = true;
             if single {
-                format!("游戏似乎因为方块 {} 出现了问题。\n\n你可以创建一个新世界，并观察游戏的运行情况：\n - 若正常运行，则是该方块导致出错，你或许需要使用一些方式删除此方块。\n - 若仍然出错，问题就可能来自其他原因……", extra[0])
+                format!(
+                    "游戏似乎因为方块 {} 出现了问题。\n\n你可以创建一个新世界，并观察游戏的运行情况：\n - 若正常运行，则是该方块导致出错，你或许需要使用一些方式删除此方块。\n - 若仍然出错，问题就可能来自其他原因……",
+                    extra[0]
+                )
             } else {
                 "游戏似乎因为世界中的某些方块出现了问题。\n\n你可以创建一个新世界，并观察游戏的运行情况：\n - 若正常运行，则是某些方块导致出错，你或许需要删除该世界。\n - 若仍然出错，问题就可能来自其他原因……".into()
             }
@@ -299,7 +324,8 @@ pub fn describe(reason: Reason, extra: &[String], log_all: &str) -> Described {
         }
         ShadersModWithOptiFine => {
             actions.push(act("open_mods_folder", "打开 Mod 文件夹"));
-            "无需同时安装 OptiFine 和 Shaders Mod，OptiFine 已经集成了 Shaders Mod 的功能。\n在删除 Shaders Mod 后，游戏即可正常运行。".into()
+            "无需同时安装 OptiFine 和 Shaders Mod，OptiFine 已经集成了 Shaders Mod 的功能。\n在删除 Shaders Mod 后，游戏即可正常运行。"
+                .into()
         }
         OldForgeNewJava => {
             actions.push(act("change_java", "更换 Java"));
@@ -323,7 +349,8 @@ pub fn describe(reason: Reason, extra: &[String], log_all: &str) -> Described {
         OptiFineWorldLoad => {
             share = true;
             actions.push(act("change_optifine", "更换 OptiFine 版本"));
-            "你所使用的 OptiFine 可能导致了你的游戏出现问题。\n\n该问题只在特定 OptiFine 版本中出现，你可以尝试更换 OptiFine 的版本。".into()
+            "你所使用的 OptiFine 可能导致了你的游戏出现问题。\n\n该问题只在特定 OptiFine 版本中出现，你可以尝试更换 OptiFine 的版本。"
+                .into()
         }
         GraphicsPixelFormat | GraphicsNoOpenGl => {
             share = true;

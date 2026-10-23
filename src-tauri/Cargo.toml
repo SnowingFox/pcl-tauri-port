@@ -1,9 +1,12 @@
 [package]
 name = "pcl-tauri-port"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Unofficial third-party macOS port of Plain Craft Launcher (PCL), built with Tauri"
+authors = ["SnowingFox"]
 edition = "2024"
+license-file = "../LICENCE"
+repository = "https://github.com/SnowingFox/pcl-tauri-port"
+publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -36,8 +39,13 @@ futures-util = "=0.3.34"
 sha1 = "=0.11.0"
 sha2 = "=0.11.1"
 hex = "=0.4.3"
+libc = "=0.2.191"
 toml = "=1.1.8"
 async-trait = "=0.1.92"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "env-filter", "std"] }
+tracing-appender = "=0.2.5"
+flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -45,9 +53,17 @@ async-trait = "=0.1.92"
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
 strip = true
+# Deliberately NOT `panic = "abort"`. The launcher relies on unwinding to contain panics:
+#  - 11 `spawn_blocking(..).await` sites turn a panicking worker into an `Err` via `JoinError`,
+#  - `download::Manager::spawn` reports a panicking install task as `Failed` instead of leaving it
+#    "Running" forever,
+#  - tao/wry catch panics at the Objective-C callback boundary.
+# With `abort`, one malformed jar or version JSON would kill the whole launcher (and any download or
+# running-game supervision with it). The cost of unwinding is a slightly larger binary.
+panic = "unwind"
 
 [dev-dependencies]
+tauri = { version = "2", features = ["test"] }
 wiremock = "=0.6.5"
 tempfile = "=3.27.0"

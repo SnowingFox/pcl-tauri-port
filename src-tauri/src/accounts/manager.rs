@@ -2,10 +2,24 @@ use super::microsoft::{self as ms, Endpoints};
 use super::secrets::{self, SecretStore};
 use super::store::{self, AccountKind, StoreData, StoredAccount};
 use super::yggdrasil as ygg;
-use super::{offline, undash, AccountError, AccountInfo, AuthSession, AuthlibInjectorConfig, Result};
+use super::{AccountError, AccountInfo, AuthSession, AuthlibInjectorConfig, Result, offline, undash};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// HTTP client for the account commands. Third-party login servers are user supplied and may
+/// legitimately live on a LAN, but never on this machine or a link-local address, and a redirect
+/// must not lead there either.
+fn guarded_http() -> reqwest::Client {
+    use crate::settings::guard::{GuardedResolver, HostPolicy, redirect_policy};
+    reqwest::Client::builder()
+        .user_agent("pcl-tauri-port")
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(redirect_policy(HostPolicy::AllowLan))
+        .dns_resolver(Arc::new(GuardedResolver(HostPolicy::AllowLan)))
+        .build()
+        .expect("http client")
+}
 
 pub struct AccountManager {
     dir: PathBuf,
@@ -25,7 +39,7 @@ impl AccountManager {
             data: Mutex::new(data),
             cancel: Arc::new(AtomicBool::new(false)),
             endpoints: Endpoints::default(),
-            http: ms::http(),
+            http: guarded_http(),
         })
     }
 
@@ -56,8 +70,14 @@ impl AccountManager {
     }
 
     pub fn set_client_id(&self, id: Option<String>) -> Result<()> {
+        let id = id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        // Azure application (client) IDs are GUIDs. Anything else is a typo or an injection attempt.
+        if let Some(i) = &id {
+            uuid::Uuid::parse_str(i)
+                .map_err(|_| AccountError::Invalid("Microsoft 客户端 ID 必须是 GUID（xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）".into()))?;
+        }
         let mut d = self.data.lock().unwrap();
-        d.settings.ms_client_id = id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        d.settings.ms_client_id = id;
         self.persist(&d)
     }
 
@@ -96,7 +116,19 @@ impl AccountManager {
     // ---- offline ----
     pub fn add_offline(&self, name: &str) -> Result<AccountInfo> {
         offline::validate_name(name)?;
-        self.add(AccountKind::Offline { name: name.into(), uuid: offline::offline_uuid(name) })
+        let uuid = offline::offline_uuid(name);
+        // The offline UUID is derived from the exact name, so the same name is the same player.
+        // Adding it again (e.g. retrying after a failed login) must not pile up duplicates; like a
+        // Microsoft re-login it returns the existing entry, now selected.
+        let existing = self.data.lock().unwrap().accounts.iter().find_map(|a| match &a.kind {
+            AccountKind::Offline { uuid: u, .. } if *u == uuid => Some(a.id.clone()),
+            _ => None,
+        });
+        if let Some(id) = existing {
+            self.select(&id)?;
+            return Ok(self.get(&id)?.info());
+        }
+        self.add(AccountKind::Offline { name: name.into(), uuid })
     }
 
     // ---- microsoft ----
@@ -138,12 +170,17 @@ impl AccountManager {
 
     // ---- yggdrasil ----
     pub async fn server_info(&self, url: &str) -> Result<ygg::ServerInfo> {
+        ygg::checked_server_url(url)?;
         ygg::discover(&self.http, url).await
     }
 
     /// Returns the added accounts (one per available profile; the server's selected profile first).
     pub async fn add_yggdrasil(&self, server: &str, identifier: &str, password: &str) -> Result<Vec<AccountInfo>> {
+        ygg::checked_server_url(server)?;
         let info = ygg::discover(&self.http, server).await?;
+        // `discover` may have followed the server's API-location hint: check where the password really goes.
+        ygg::checked_server_url(&info.url)?;
+        ygg::ensure_secure_for_credentials(&info.url)?;
         let res = ygg::authenticate(&self.http, &info.url, identifier, password, None).await?;
         let mut profiles = Vec::new();
         if let Some(p) = res.profile.clone() {
@@ -241,7 +278,9 @@ impl AccountManager {
         let (uuid, base) = match &acc.kind {
             AccountKind::Offline { .. } => return Ok(None),
             AccountKind::Microsoft { uuid, .. } => (uuid.clone(), super::skin::MOJANG_SESSION_PROFILE.to_string()),
-            AccountKind::Yggdrasil { uuid, server_url, .. } => (uuid.clone(), format!("{server_url}/sessionserver/session/minecraft/profile")),
+            AccountKind::Yggdrasil { uuid, server_url, .. } => {
+                (uuid.clone(), format!("{server_url}/sessionserver/session/minecraft/profile"))
+            }
         };
         let info = super::skin::fetch_skin_info(&self.http, &base, &uuid).await?;
         match info.url {
@@ -279,13 +318,35 @@ mod tests {
     }
 
     #[test]
+    fn adding_the_same_offline_name_again_returns_the_existing_account() {
+        let (m, dir) = mgr();
+        let first = m.add_offline("Steve").unwrap();
+        let other = m.add_offline("Alex").unwrap();
+        m.select(&other.id).unwrap();
+
+        let again = m.add_offline("Steve").unwrap();
+        assert_eq!(again.id, first.id, "same name must map to the same entry");
+        assert_eq!(m.list().len(), 2, "no duplicate was added");
+        assert_eq!(m.selected().as_deref(), Some(first.id.as_str()), "re-adding selects it");
+
+        // Names are case-sensitive for the offline UUID, so these are different players.
+        m.add_offline("steve").unwrap();
+        assert_eq!(m.list().len(), 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn microsoft_requires_client_id() {
         let (m, dir) = mgr();
         if std::env::var("PCL_MS_CLIENT_ID").is_err() && option_env!("PCL_MS_CLIENT_ID").is_none() {
             assert!(matches!(m.client_id(), Err(AccountError::MissingClientId)));
         }
-        m.set_client_id(Some("abc".into())).unwrap();
-        assert_eq!(m.client_id().unwrap(), "abc");
+        assert!(m.set_client_id(Some("abc".into())).is_err(), "not a GUID");
+        assert!(m.set_client_id(Some("1111 2222".into())).is_err());
+        let cid = "00000000-1111-2222-3333-444444444444";
+        m.set_client_id(Some(cid.into())).unwrap();
+        assert_eq!(m.client_id().unwrap(), cid);
+        m.set_client_id(None).unwrap();
         std::fs::remove_dir_all(dir).ok();
     }
 }

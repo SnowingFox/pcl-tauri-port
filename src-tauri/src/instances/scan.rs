@@ -20,10 +20,12 @@ pub fn find_json(version_dir: &Path, name: &str) -> Result<PathBuf, String> {
         .collect();
     candidates.sort();
     for p in candidates {
-        if let Ok(v) = read_json_value(&p) {
-            if v.get("mainClass").is_some() && v.get("type").is_some() && v.get("id").is_some() {
-                return Ok(p);
-            }
+        if let Ok(v) = read_json_value(&p)
+            && v.get("mainClass").is_some()
+            && v.get("type").is_some()
+            && v.get("id").is_some()
+        {
+            return Ok(p);
         }
     }
     Err(format!("未找到版本 JSON 文件：{name}.json"))
@@ -378,11 +380,7 @@ mod tests {
     #[test]
     fn self_inheritance_does_not_loop() {
         let d = tempfile::tempdir().unwrap();
-        write_version(
-            d.path(),
-            "loop",
-            r#"{"id":"loop","inheritsFrom":"loop","type":"release","mainClass":"x","libraries":[]}"#,
-        );
+        write_version(d.path(), "loop", r#"{"id":"loop","inheritsFrom":"loop","type":"release","mainClass":"x","libraries":[]}"#);
         let i = load_instance(d.path(), "loop", IsolationMode::Off);
         assert!(i.error.is_none() || i.mc_version.is_none());
     }

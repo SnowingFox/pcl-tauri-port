@@ -87,12 +87,7 @@ mod tests {
     fn round_trip_and_defaults() {
         let d = tempfile::tempdir().unwrap();
         assert_eq!(InstanceSettings::load(d.path()), InstanceSettings::default());
-        let s = InstanceSettings {
-            isolated: Some(true),
-            memory_mb: Some(1),
-            starred: true,
-            ..Default::default()
-        };
+        let s = InstanceSettings { isolated: Some(true), memory_mb: Some(1), starred: true, ..Default::default() };
         s.save(d.path()).unwrap();
         let back = InstanceSettings::load(d.path());
         assert_eq!(back.isolated, Some(true));

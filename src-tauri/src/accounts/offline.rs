@@ -1,4 +1,4 @@
-use super::{dash, undash, AccountError, Result};
+use super::{AccountError, Result, dash, undash};
 use md5::{Digest, Md5};
 
 /// Minecraft's offline UUID: `UUID.nameUUIDFromBytes("OfflinePlayer:" + name)`,
@@ -18,16 +18,8 @@ pub fn offline_uuid_undashed(name: &str) -> String {
 
 /// Offline names: 1-16 chars of `[A-Za-z0-9_]` (what vanilla servers accept).
 pub fn validate_name(name: &str) -> Result<()> {
-    let ok = !name.is_empty()
-        && name.chars().count() <= 16
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if ok {
-        Ok(())
-    } else {
-        Err(AccountError::Invalid(
-            "offline name must be 1-16 characters of letters, digits or underscore".into(),
-        ))
-    }
+    let ok = !name.is_empty() && name.chars().count() <= 16 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if ok { Ok(()) } else { Err(AccountError::Invalid("offline name must be 1-16 characters of letters, digits or underscore".into())) }
 }
 
 #[cfg(test)]

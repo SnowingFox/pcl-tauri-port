@@ -74,12 +74,7 @@ pub fn parse_project(h: &Value) -> ProjectSummary {
 
 pub fn parse_version(v: &Value) -> ResourceFile {
     let files = v["files"].as_array().cloned().unwrap_or_default();
-    let primary = files
-        .iter()
-        .find(|f| f["primary"].as_bool().unwrap_or(false))
-        .or_else(|| files.first())
-        .cloned()
-        .unwrap_or(Value::Null);
+    let primary = files.iter().find(|f| f["primary"].as_bool().unwrap_or(false)).or_else(|| files.first()).cloned().unwrap_or(Value::Null);
     let deps = v["dependencies"]
         .as_array()
         .map(|a| {
@@ -97,10 +92,7 @@ pub fn parse_version(v: &Value) -> ResourceFile {
                 .collect()
         })
         .unwrap_or_default();
-    let mut loaders: Vec<ModLoader> = str_list(v, "loaders")
-        .iter()
-        .filter_map(|l| ModLoader::from_name(l))
-        .collect();
+    let mut loaders: Vec<ModLoader> = str_list(v, "loaders").iter().filter_map(|l| ModLoader::from_name(l)).collect();
     loaders.sort();
     loaders.dedup();
     ResourceFile {
@@ -133,6 +125,12 @@ pub async fn search(kind: ResourceKind, q: &SearchQuery) -> Result<SearchResult>
     Ok(parse_search(&send_json(http_client()?.get(url)).await?))
 }
 
+/// GET /version/{id}
+pub async fn version_by_id(id: &str) -> Result<ResourceFile> {
+    let v = send_json(http_client()?.get(format!("{BASE}/version/{}", urlencode(id)))).await?;
+    Ok(parse_version(&v))
+}
+
 pub async fn project(id_or_slug: &str) -> Result<ProjectSummary> {
     let v = send_json(http_client()?.get(format!("{BASE}/project/{}", urlencode(id_or_slug)))).await?;
     Ok(parse_project(&v))
@@ -144,11 +142,7 @@ pub async fn projects(ids: &[String]) -> Result<Vec<ProjectSummary>> {
     Ok(v.as_array().map(|a| a.iter().map(parse_project).collect()).unwrap_or_default())
 }
 
-pub async fn versions(
-    project: &str,
-    mc_version: Option<&str>,
-    loader: Option<ModLoader>,
-) -> Result<Vec<ResourceFile>> {
+pub async fn versions(project: &str, mc_version: Option<&str>, loader: Option<ModLoader>) -> Result<Vec<ResourceFile>> {
     let mut url = format!("{BASE}/project/{}/version?include_changelog=false", urlencode(project));
     if let Some(l) = loader {
         url += &format!("&loaders={}", urlencode(&json!([l.modrinth_name()]).to_string()));
@@ -168,9 +162,7 @@ pub async fn versions_by_hashes(hashes: &[String]) -> Result<std::collections::H
 }
 
 pub fn parse_hash_map(v: &Value) -> std::collections::HashMap<String, ResourceFile> {
-    v.as_object()
-        .map(|o| o.iter().map(|(k, x)| (k.clone(), parse_version(x))).collect())
-        .unwrap_or_default()
+    v.as_object().map(|o| o.iter().map(|(k, x)| (k.clone(), parse_version(x))).collect()).unwrap_or_default()
 }
 
 /// POST /version_files/update: latest version for each hash given loaders and MC versions.
@@ -222,10 +214,7 @@ mod tests {
     #[test]
     fn facets() {
         let q = SearchQuery { mc_version: Some("1.20.1".into()), loader: Some(ModLoader::Fabric), ..Default::default() };
-        assert_eq!(
-            build_facets(ResourceKind::Mod, &q),
-            r#"[["project_type:mod"],["categories:fabric"],["versions:1.20.1"]]"#
-        );
+        assert_eq!(build_facets(ResourceKind::Mod, &q), r#"[["project_type:mod"],["categories:fabric"],["versions:1.20.1"]]"#);
     }
 
     #[test]

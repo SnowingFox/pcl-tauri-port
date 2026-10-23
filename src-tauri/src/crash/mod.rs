@@ -23,6 +23,7 @@ pub struct CrashReasonResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CrashAnalysis {
     pub reasons: Vec<CrashReasonResult>,
     /// All reason messages joined the way PCL shows them (with trailing hints).

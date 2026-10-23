@@ -40,18 +40,29 @@ impl From<serde_json::Error> for SettingsError {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Bundle identifier (must match `tauri.conf.json`); names the app data directory.
+pub const APP_IDENTIFIER: &str = "com.snowingfox.pcltauriport";
+
 /// App data directory. `PCL_DATA_DIR` overrides (used by tests and portable setups).
-/// macOS: `~/Library/Application Support/PCL-Tauri`.
+/// macOS: `~/Library/Application Support/<identifier>`.
 pub fn data_dir() -> PathBuf {
     if let Some(p) = std::env::var_os("PCL_DATA_DIR") {
         return PathBuf::from(p);
     }
+    if cfg!(target_os = "macos") {
+        home_dir().join("Library/Application Support").join(APP_IDENTIFIER)
+    } else if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
+        PathBuf::from(x).join(APP_IDENTIFIER)
+    } else {
+        home_dir().join(".local/share").join(APP_IDENTIFIER)
+    }
+}
+
+/// Data directory used before the identifier-based layout (migrated by `app::paths`).
+pub fn legacy_data_dir() -> PathBuf {
     if cfg!(target_os = "macos") {
         home_dir().join("Library/Application Support/PCL-Tauri")
     } else if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
@@ -63,22 +74,14 @@ pub fn data_dir() -> PathBuf {
 
 /// The official macOS Minecraft folder.
 pub fn default_minecraft_dir() -> PathBuf {
-    if cfg!(target_os = "macos") {
-        home_dir().join("Library/Application Support/minecraft")
-    } else {
-        home_dir().join(".minecraft")
-    }
+    if cfg!(target_os = "macos") { home_dir().join("Library/Application Support/minecraft") } else { home_dir().join(".minecraft") }
 }
 
 /// Write JSON atomically: temp file in the same dir, fsync, rename over target.
 pub fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), SettingsError> {
     let parent = path.parent().ok_or_else(|| SettingsError::Invalid("path has no parent".into()))?;
     fs::create_dir_all(parent)?;
-    let tmp = parent.join(format!(
-        ".{}.{}.tmp",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("settings"),
-        std::process::id()
-    ));
+    let tmp = parent.join(format!(".{}.{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("settings"), std::process::id()));
     let bytes = serde_json::to_vec_pretty(value)?;
     {
         let mut f = fs::File::create(&tmp)?;
@@ -110,19 +113,16 @@ pub fn migrate(mut doc: Value) -> Value {
     if version < 1 {
         let mut out = json!({ "schema_version": 1 });
         if let Some(obj) = doc.as_object_mut() {
-            if let Some(Value::String(p)) = obj.remove("java_path") {
-                if !p.is_empty() {
-                    out["java"] = json!({ "selected": p });
-                }
+            if let Some(Value::String(p)) = obj.remove("java_path")
+                && !p.is_empty()
+            {
+                out["java"] = json!({ "selected": p });
             }
             if let Some(mb) = obj.remove("memory_mb").and_then(|v| v.as_u64()) {
                 out["memory"] = json!({ "mode": "custom", "custom_mb": mb });
             }
             if let Some(Value::Array(folders)) = obj.remove("mc_folders") {
-                let list: Vec<Value> = folders
-                    .into_iter()
-                    .filter_map(|f| f.as_str().map(|s| json!({ "name": s, "path": s })))
-                    .collect();
+                let list: Vec<Value> = folders.into_iter().filter_map(|f| f.as_str().map(|s| json!({ "name": s, "path": s }))).collect();
                 out["game"] = json!({ "folders": list });
             }
             if let Some(Value::String(s)) = obj.remove("download_source") {
@@ -142,14 +142,31 @@ pub fn migrate(mut doc: Value) -> Value {
         }
         doc = out;
     }
-    // Future: if version < 2 { ... }
+    if version < 2 {
+        // v2 changed the default download source from "mirror_first" to "official_first". The old
+        // default was written to disk, so a file saved by an earlier build cannot tell "never
+        // chose" from "chose the mirror". Move the two download-source fields that still say
+        // mirror_first to the new default; "official" and "official_first" are untouched.
+        // `mod_source` already defaulted to official_first.
+        if let Some(d) = doc.get_mut("download").and_then(Value::as_object_mut) {
+            for key in ["source", "version_source"] {
+                if d.get(key).and_then(Value::as_str) == Some("mirror_first") {
+                    d.insert(key.into(), json!("official_first"));
+                }
+            }
+        }
+        doc["schema_version"] = json!(2);
+    }
     doc
 }
+
+type ChangeListener = Box<dyn Fn(&GlobalSettings) + Send + Sync>;
 
 /// Thread-safe settings store backed by one JSON file.
 pub struct SettingsStore {
     path: PathBuf,
     inner: Mutex<GlobalSettings>,
+    listeners: Mutex<Vec<ChangeListener>>,
 }
 
 impl SettingsStore {
@@ -161,9 +178,7 @@ impl SettingsStore {
     /// `settings.json.corrupt` and defaults are used, so launch never fails.
     pub fn load(path: PathBuf) -> Self {
         let mut settings = match fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<Value>(&bytes)
-                .and_then(|v| serde_json::from_value::<GlobalSettings>(migrate(v)))
-            {
+            Ok(bytes) => match serde_json::from_slice::<Value>(&bytes).and_then(|v| serde_json::from_value::<GlobalSettings>(migrate(v))) {
                 Ok(s) => s,
                 Err(_) => {
                     let _ = fs::rename(&path, path.with_extension("json.corrupt"));
@@ -173,7 +188,7 @@ impl SettingsStore {
             Err(_) => GlobalSettings::default(),
         };
         settings.sanitize();
-        Self { path, inner: Mutex::new(settings) }
+        Self { path, inner: Mutex::new(settings), listeners: Mutex::new(Vec::new()) }
     }
 
     pub fn path(&self) -> &Path {
@@ -189,7 +204,16 @@ impl SettingsStore {
         new.sanitize();
         atomic_write_json(&self.path, &new)?;
         *self.inner.lock().unwrap() = new.clone();
+        for l in self.listeners.lock().unwrap().iter() {
+            l(&new);
+        }
         Ok(new)
+    }
+
+    /// Register a callback invoked (synchronously) after every successful `set`/`update`/`patch`/`reset`.
+    /// Callbacks must not call back into `on_change`.
+    pub fn on_change(&self, f: impl Fn(&GlobalSettings) + Send + Sync + 'static) {
+        self.listeners.lock().unwrap().push(Box::new(f));
     }
 
     /// Mutate in place, sanitize, persist. Memory state is unchanged if the write fails.
@@ -200,11 +224,12 @@ impl SettingsStore {
     }
 
     /// Merge a partial JSON patch (objects merge recursively, everything else replaces).
+    /// The command layer merges and checks the result itself (`settings_patch`); kept for tests.
+    #[allow(dead_code)]
     pub fn patch(&self, patch: Value) -> Result<GlobalSettings, SettingsError> {
         let mut doc = serde_json::to_value(self.get())?;
         merge(&mut doc, patch);
-        let next: GlobalSettings =
-            serde_json::from_value(doc).map_err(|e| SettingsError::Invalid(e.to_string()))?;
+        let next: GlobalSettings = serde_json::from_value(doc).map_err(|e| SettingsError::Invalid(e.to_string()))?;
         self.set(next)
     }
 
@@ -268,18 +293,39 @@ mod tests {
     fn migrates_v0_flat_layout() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("settings.json");
-        fs::write(
-            &p,
-            r#"{"java_path":"/opt/java/bin/java","memory_mb":8192,"mc_folders":["/games/mc"],"download_source":"official"}"#,
-        )
-        .unwrap();
+        fs::write(&p, r#"{"java_path":"/opt/java/bin/java","memory_mb":8192,"mc_folders":["/games/mc"],"download_source":"official"}"#)
+            .unwrap();
         let g = SettingsStore::load(p).get();
-        assert_eq!(g.schema_version, 1);
+        assert_eq!(g.schema_version, CURRENT_SCHEMA_VERSION, "a v0 file is migrated all the way up");
         assert_eq!(g.java.selected.as_deref(), Some("/opt/java/bin/java"));
         assert_eq!(g.memory.mode, MemoryMode::Custom);
         assert_eq!(g.memory.custom_mb, 8192);
         assert_eq!(g.game.folders[0].path, "/games/mc");
         assert_eq!(g.download.source, DownloadSource::Official);
+    }
+
+    #[test]
+    fn schema_v2_moves_the_old_default_download_source_to_official_first() {
+        let load = |json: &str| {
+            let d = tempfile::tempdir().unwrap();
+            let p = d.path().join("settings.json");
+            fs::write(&p, json).unwrap();
+            SettingsStore::load(p).get()
+        };
+        // Saved by a v1 build with the old default: both fields say mirror_first.
+        let g = load(r#"{"schema_version":1,"download":{"source":"mirror_first","version_source":"mirror_first","thread_count":32}}"#);
+        assert_eq!(g.schema_version, 2);
+        assert_eq!((g.download.source, g.download.version_source), (DownloadSource::OfficialFirst, DownloadSource::OfficialFirst));
+        assert_eq!(g.download.thread_count, 32, "other download settings are kept");
+        // An explicit "official" is a real choice and survives.
+        let g = load(r#"{"schema_version":1,"download":{"source":"official","version_source":"mirror_first"}}"#);
+        assert_eq!((g.download.source, g.download.version_source), (DownloadSource::Official, DownloadSource::OfficialFirst));
+        // A file from before the download section existed gets the new default too.
+        assert_eq!(load(r#"{"schema_version":1}"#).download.version_source, DownloadSource::OfficialFirst);
+        assert_eq!(GlobalSettings::default().download.version_source, DownloadSource::OfficialFirst);
+        // v2 files are never touched again: choosing the mirror afterwards is respected.
+        let g = load(r#"{"schema_version":2,"download":{"version_source":"mirror_first"}}"#);
+        assert_eq!(g.download.version_source, DownloadSource::MirrorFirst);
     }
 
     #[test]
@@ -331,10 +377,7 @@ mod tests {
     fn atomic_write_leaves_no_temp_files() {
         let (d, s) = tmp_store();
         s.update(|g| g.launcher.debug_mode = true).unwrap();
-        let names: Vec<_> = fs::read_dir(d.path())
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
+        let names: Vec<_> = fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert_eq!(names, vec!["settings.json".to_string()]);
     }
 

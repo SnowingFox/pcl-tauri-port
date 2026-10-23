@@ -1,16 +1,12 @@
 import { call, on, useMockApi } from "./runtime";
 import * as mock from "./mock/launch";
-import type { Instance, LaunchExit, LaunchLog, LaunchProgress, ModEntry, SaveEntry } from "./types";
+import { toLaunchExit, toLaunchLog, toLaunchProgress } from "./adapters";
+import type { RawExitEvent, RawLaunchProgress, RawLogEvent } from "./raw";
+import type { LaunchExit, LaunchLog, LaunchProgress } from "./types";
 
 export const LAUNCH_CMD = {
-  listInstances: "launch_list_instances",
-  start: "launch_start",
-  kill: "launch_kill",
-  deleteInstance: "launch_delete_instance",
-  listMods: "launch_list_mods",
-  toggleMod: "launch_toggle_mod",
-  listSaves: "launch_list_saves",
-  openFolder: "launch_open_instance_folder",
+  launch: "app_launch",
+  kill: "app_launch_kill",
 } as const;
 export const LAUNCH_EVT = {
   progress: "launch://progress",
@@ -19,33 +15,27 @@ export const LAUNCH_EVT = {
 } as const;
 
 export interface LaunchApi {
-  listInstances(): Promise<Instance[]>;
-  /** returns a launchId; progress/log/exit arrive via events */
+  /**
+   * Runs the whole pipeline (check, Java, repair downloads, natives, spawn) and resolves with the launchId
+   * once the process is spawned. Progress, log and exit arrive via events.
+   */
   start(instanceId: string, accountId: string): Promise<string>;
   kill(launchId: string): Promise<void>;
-  deleteInstance(instanceId: string): Promise<void>;
-  listMods(instanceId: string): Promise<ModEntry[]>;
-  toggleMod(instanceId: string, fileName: string, enabled: boolean): Promise<void>;
-  listSaves(instanceId: string): Promise<SaveEntry[]>;
-  openFolder(instanceId: string): Promise<void>;
   onProgress(cb: (p: LaunchProgress) => void): Promise<() => void>;
   onLog(cb: (l: LaunchLog) => void): Promise<() => void>;
   onExit(cb: (e: LaunchExit) => void): Promise<() => void>;
 }
 
-const real: LaunchApi = {
-  listInstances: () => call(LAUNCH_CMD.listInstances),
-  start: (instanceId, accountId) => call(LAUNCH_CMD.start, { instanceId, accountId }),
+/** The real (Tauri) implementation; exported for contract tests. */
+export const realLaunchApi: LaunchApi = {
+  async start(instanceId, accountId) {
+    const r = await call<{ launchId: string }>(LAUNCH_CMD.launch, { instanceId, accountId });
+    return r.launchId;
+  },
   kill: (launchId) => call(LAUNCH_CMD.kill, { launchId }),
-  deleteInstance: (instanceId) => call(LAUNCH_CMD.deleteInstance, { instanceId }),
-  listMods: (instanceId) => call(LAUNCH_CMD.listMods, { instanceId }),
-  toggleMod: (instanceId, fileName, enabled) =>
-    call(LAUNCH_CMD.toggleMod, { instanceId, fileName, enabled }),
-  listSaves: (instanceId) => call(LAUNCH_CMD.listSaves, { instanceId }),
-  openFolder: (instanceId) => call(LAUNCH_CMD.openFolder, { instanceId }),
-  onProgress: (cb) => on(LAUNCH_EVT.progress, cb),
-  onLog: (cb) => on(LAUNCH_EVT.log, cb),
-  onExit: (cb) => on(LAUNCH_EVT.exit, cb),
+  onProgress: (cb) => on<RawLaunchProgress>(LAUNCH_EVT.progress, (p) => cb(toLaunchProgress(p))),
+  onLog: (cb) => on<RawLogEvent>(LAUNCH_EVT.log, (l) => cb(toLaunchLog(l))),
+  onExit: (cb) => on<RawExitEvent>(LAUNCH_EVT.exit, (e) => cb(toLaunchExit(e))),
 };
 
-export const launchApi: LaunchApi = useMockApi ? mock.launchMock : real;
+export const launchApi: LaunchApi = useMockApi ? mock.launchMock : realLaunchApi;

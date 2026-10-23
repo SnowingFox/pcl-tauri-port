@@ -12,6 +12,13 @@ fn finish(c: super::collect::Collected, manual: bool) -> CrashAnalysis {
     r
 }
 
+/// Analyze the logs found under `game_dir` / `root`. Only files written within the last three
+/// minutes count (PCL's rule), plus the captured `live_output`.
+pub fn analyze_game(game_dir: &Path, root: &Path, live_output: Option<&[String]>) -> CrashAnalysis {
+    let paths = candidate_paths(game_dir, root);
+    finish(collect(&paths, true, live_output), false)
+}
+
 /// Analyze the logs of an instance after a crash. `live_output` is the tail of
 /// the game's stdout/stderr captured by the launcher.
 #[tauri::command]
@@ -22,8 +29,7 @@ pub fn crash_analyze_instance(root: String, name: String, live_output: Option<Ve
     }
     crate::instances::detect::validate_name(&name)?;
     let info = load_instance(Path::new(&root), &name, g.game.isolation);
-    let paths = candidate_paths(Path::new(&info.game_dir), Path::new(&root));
-    Ok(finish(collect(&paths, true, live_output.as_deref()), false))
+    Ok(analyze_game(Path::new(&info.game_dir), Path::new(&root), live_output.as_deref()))
 }
 
 /// Analyze a log file the user picked (`.log`, `.txt`, hs_err, crash report).
@@ -39,6 +45,11 @@ pub fn crash_analyze_file(path: String) -> Result<CrashAnalysis, String> {
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     if ext != "log" && ext != "txt" {
         return Err("仅支持 .log 与 .txt 文件".into());
+    }
+    // Same limit as the automatic collector; a multi-gigabyte "log" must not be read into memory.
+    let len = fs::metadata(&p).map_err(|e| e.to_string())?.len();
+    if len > super::collect::MAX_FILE_BYTES {
+        return Err(format!("文件过大（{} MB），最大支持 {} MB", len >> 20, super::collect::MAX_FILE_BYTES >> 20));
     }
     let bytes = fs::read(&p).map_err(|e| e.to_string())?;
     let lines: Vec<String> = String::from_utf8_lossy(&bytes).lines().map(String::from).collect();

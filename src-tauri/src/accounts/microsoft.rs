@@ -67,10 +67,16 @@ fn default_interval() -> u64 {
     5
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct MsTokens {
     pub access_token: String,
     pub refresh_token: String,
+}
+
+impl std::fmt::Debug for MsTokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MsTokens").field("access_token", &"<redacted>").field("refresh_token", &"<redacted>").finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,19 +85,25 @@ pub struct McProfile {
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct McLogin {
     pub access_token: String,
     pub expires_in: u64,
     pub profile: McProfile,
 }
 
+impl std::fmt::Debug for McLogin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McLogin")
+            .field("access_token", &"<redacted>")
+            .field("expires_in", &self.expires_in)
+            .field("profile", &self.profile)
+            .finish()
+    }
+}
+
 pub fn http() -> reqwest::Client {
-    reqwest::Client::builder()
-        .user_agent("pcl-tauri-port")
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("http client")
+    reqwest::Client::builder().user_agent("pcl-tauri-port").timeout(Duration::from_secs(30)).build().expect("http client")
 }
 
 pub async fn request_device_code(c: &reqwest::Client, ep: &Endpoints, client_id: &str) -> Result<DeviceCode> {
@@ -138,11 +150,7 @@ fn parse_token_response(status_ok: bool, body: &str) -> Result<PollOutcome> {
 pub async fn poll_once(c: &reqwest::Client, ep: &Endpoints, client_id: &str, device_code: &str) -> Result<PollOutcome> {
     let r = c
         .post(&ep.token)
-        .form(&[
-            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ("client_id", client_id),
-            ("device_code", device_code),
-        ])
+        .form(&[("grant_type", "urn:ietf:params:oauth:grant-type:device_code"), ("client_id", client_id), ("device_code", device_code)])
         .send()
         .await?;
     let ok = r.status().is_success();
@@ -178,12 +186,7 @@ pub async fn poll_for_tokens(
 pub async fn refresh(c: &reqwest::Client, ep: &Endpoints, client_id: &str, refresh_token: &str) -> Result<MsTokens> {
     let r = c
         .post(&ep.token)
-        .form(&[
-            ("grant_type", "refresh_token"),
-            ("client_id", client_id),
-            ("refresh_token", refresh_token),
-            ("scope", SCOPE),
-        ])
+        .form(&[("grant_type", "refresh_token"), ("client_id", client_id), ("refresh_token", refresh_token), ("scope", SCOPE)])
         .send()
         .await?;
     let ok = r.status().is_success();
@@ -246,17 +249,15 @@ pub async fn xsts(c: &reqwest::Client, ep: &Endpoints, xbl_token: &str) -> Resul
     let body = r.text().await?;
     if !ok {
         let code = serde_json::from_str::<serde_json::Value>(&body).ok().and_then(|v| v["XErr"].as_u64());
-        return Err(AccountError::Xbox(code.map(xerr_message).unwrap_or_else(|| format!("XSTS failed: {}", body.chars().take(200).collect::<String>()))));
+        return Err(AccountError::Xbox(
+            code.map(xerr_message).unwrap_or_else(|| format!("XSTS failed: {}", body.chars().take(200).collect::<String>())),
+        ));
     }
     parse_xbox_token(&body)
 }
 
 pub async fn minecraft_login(c: &reqwest::Client, ep: &Endpoints, uhs: &str, xsts_token: &str) -> Result<(String, u64)> {
-    let r = c
-        .post(&ep.mc_login)
-        .json(&json!({"identityToken": format!("XBL3.0 x={uhs};{xsts_token}")}))
-        .send()
-        .await?;
+    let r = c.post(&ep.mc_login).json(&json!({"identityToken": format!("XBL3.0 x={uhs};{xsts_token}")})).send().await?;
     let ok = r.status().is_success();
     let body = r.text().await?;
     if !ok {
@@ -373,12 +374,36 @@ mod tests {
         Mock::given(method("POST")).and(path("/devicecode")).respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "device_code":"DC","user_code":"ABCD","verification_uri":"https://microsoft.com/link","expires_in":900,"interval":1,"message":"go"
         }))).mount(&s).await;
-        Mock::given(method("POST")).and(path("/token")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token":"MSA","refresh_token":"MSR"}))).mount(&s).await;
-        Mock::given(method("POST")).and(path("/xbl")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"Token":"XBL","DisplayClaims":{"xui":[{"uhs":"UHS"}]}}))).mount(&s).await;
-        Mock::given(method("POST")).and(path("/xsts")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"Token":"XSTS","DisplayClaims":{"xui":[{"uhs":"UHS"}]}}))).mount(&s).await;
-        Mock::given(method("POST")).and(path("/mclogin")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token":"MC","expires_in":86400}))).mount(&s).await;
-        Mock::given(method("GET")).and(path("/ent")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"items":[{"name":"game_minecraft"}]}))).mount(&s).await;
-        Mock::given(method("GET")).and(path("/profile")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"id":"b50ad385829d3141a2167e7d7539ba7f","name":"Notch"}))).mount(&s).await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token":"MSA","refresh_token":"MSR"})))
+            .mount(&s)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/xbl"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"Token":"XBL","DisplayClaims":{"xui":[{"uhs":"UHS"}]}})))
+            .mount(&s)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/xsts"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"Token":"XSTS","DisplayClaims":{"xui":[{"uhs":"UHS"}]}})))
+            .mount(&s)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/mclogin"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token":"MC","expires_in":86400})))
+            .mount(&s)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/ent"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items":[{"name":"game_minecraft"}]})))
+            .mount(&s)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/profile"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id":"b50ad385829d3141a2167e7d7539ba7f","name":"Notch"})))
+            .mount(&s)
+            .await;
 
         let ep = eps(&s);
         let c = http();
@@ -396,7 +421,11 @@ mod tests {
     #[tokio::test]
     async fn not_owned_and_xsts_error() {
         let s = MockServer::start().await;
-        Mock::given(method("POST")).and(path("/xsts")).respond_with(ResponseTemplate::new(401).set_body_json(json!({"XErr":2148916233u64}))).mount(&s).await;
+        Mock::given(method("POST"))
+            .and(path("/xsts"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({"XErr":2148916233u64})))
+            .mount(&s)
+            .await;
         let e = xsts(&http(), &eps(&s), "x").await.unwrap_err();
         assert!(e.to_string().contains("no Xbox account"));
         Mock::given(method("GET")).and(path("/profile")).respond_with(ResponseTemplate::new(404)).mount(&s).await;

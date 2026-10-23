@@ -10,17 +10,13 @@ pub async fn install(
     engine: &dyn ModpackInstaller,
 ) -> Result<(), String> {
     std::fs::create_dir_all(instance_dir).map_err(|e| e.to_string())?;
-    let files: Vec<PlanFile> = plan
-        .files
-        .iter()
-        .filter(|f| !f.optional || accepted_optional.contains(&f.path))
-        .cloned()
-        .collect();
+    let files: Vec<PlanFile> = plan.files.iter().filter(|f| !f.optional || accepted_optional.contains(&f.path)).cloned().collect();
     if let Some(unresolved) = files.iter().find(|f| f.urls.is_empty()) {
         return Err(format!("file has no download URL (resolve the plan first): {}", unresolved.path));
     }
     engine.install_game(instance_dir, &plan.mc_version, &plan.loaders).await?;
-    extract_overrides(archive, plan, instance_dir)?;
+    let (a, p, d) = (archive.to_path_buf(), plan.clone(), instance_dir.to_path_buf());
+    tokio::task::spawn_blocking(move || extract_overrides(&a, &p, &d)).await.map_err(|e| e.to_string())??;
     engine.download_files(instance_dir, &files).await
 }
 
@@ -46,8 +42,8 @@ mod tests {
     #[test]
     fn orchestrates_in_order() {
         let idx = r#"{"name":"P","dependencies":{"minecraft":"1.20.1","forge":"47.1.0"},
-          "files":[{"path":"mods/a.jar","hashes":{"sha1":"a"},"downloads":["https://x/a"]},
-                   {"path":"mods/o.jar","hashes":{"sha1":"o"},"downloads":["https://x/o"],"env":{"client":"optional"}}]}"#;
+          "files":[{"path":"mods/a.jar","hashes":{"sha1":"a"},"downloads":["https://cdn.modrinth.com/data/x/a"]},
+                   {"path":"mods/o.jar","hashes":{"sha1":"o"},"downloads":["https://cdn.modrinth.com/data/x/o"],"env":{"client":"optional"}}]}"#;
         let dir = std::env::temp_dir().join(format!("pcl-inst-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
