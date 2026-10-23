@@ -199,13 +199,19 @@ jobs:
           exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
           archs="$(lipo -archs "$app/Contents/MacOS/$exe")"
           echo "Architectures in $exe: $archs"
-          case " $archs " in
-            *" arm64 "*" x86_64 "* | *" x86_64 "*" arm64 "*) ;;
-            *)
-              echo "::error::Universal binary expected (arm64 + x86_64), got: $archs"
-              exit 1
-              ;;
-          esac
+          # `lipo -archs` prints the architectures in any order, separated by single spaces. Check each
+          # one separately. The earlier single pattern `*" x86_64 "*" arm64 "*` could never match
+          # "x86_64 arm64": the one space between the words would have to belong to both quoted
+          # strings at once. It rejected a correct universal binary on the first real release run.
+          for want in arm64 x86_64; do
+            case " $archs " in
+              *" $want "*) ;;
+              *)
+                echo "::error::Universal binary expected (arm64 + x86_64), got: $archs"
+                exit 1
+                ;;
+            esac
+          done
 
           # Stable, shell-friendly asset name that keeps the licence-mandated name prefix.
           asset="Plain-Craft-Launcher-PCL-Tauri_${VERSION}_universal.dmg"
