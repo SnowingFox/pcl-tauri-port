@@ -142,7 +142,21 @@ pub fn migrate(mut doc: Value) -> Value {
         }
         doc = out;
     }
-    // Future: if version < 2 { ... }
+    if version < 2 {
+        // v2 changed the default download source from "mirror_first" to "official_first". The old
+        // default was written to disk, so a file saved by an earlier build cannot tell "never
+        // chose" from "chose the mirror". Move the two download-source fields that still say
+        // mirror_first to the new default; "official" and "official_first" are untouched.
+        // `mod_source` already defaulted to official_first.
+        if let Some(d) = doc.get_mut("download").and_then(Value::as_object_mut) {
+            for key in ["source", "version_source"] {
+                if d.get(key).and_then(Value::as_str) == Some("mirror_first") {
+                    d.insert(key.into(), json!("official_first"));
+                }
+            }
+        }
+        doc["schema_version"] = json!(2);
+    }
     doc
 }
 
@@ -282,12 +296,36 @@ mod tests {
         fs::write(&p, r#"{"java_path":"/opt/java/bin/java","memory_mb":8192,"mc_folders":["/games/mc"],"download_source":"official"}"#)
             .unwrap();
         let g = SettingsStore::load(p).get();
-        assert_eq!(g.schema_version, 1);
+        assert_eq!(g.schema_version, CURRENT_SCHEMA_VERSION, "a v0 file is migrated all the way up");
         assert_eq!(g.java.selected.as_deref(), Some("/opt/java/bin/java"));
         assert_eq!(g.memory.mode, MemoryMode::Custom);
         assert_eq!(g.memory.custom_mb, 8192);
         assert_eq!(g.game.folders[0].path, "/games/mc");
         assert_eq!(g.download.source, DownloadSource::Official);
+    }
+
+    #[test]
+    fn schema_v2_moves_the_old_default_download_source_to_official_first() {
+        let load = |json: &str| {
+            let d = tempfile::tempdir().unwrap();
+            let p = d.path().join("settings.json");
+            fs::write(&p, json).unwrap();
+            SettingsStore::load(p).get()
+        };
+        // Saved by a v1 build with the old default: both fields say mirror_first.
+        let g = load(r#"{"schema_version":1,"download":{"source":"mirror_first","version_source":"mirror_first","thread_count":32}}"#);
+        assert_eq!(g.schema_version, 2);
+        assert_eq!((g.download.source, g.download.version_source), (DownloadSource::OfficialFirst, DownloadSource::OfficialFirst));
+        assert_eq!(g.download.thread_count, 32, "other download settings are kept");
+        // An explicit "official" is a real choice and survives.
+        let g = load(r#"{"schema_version":1,"download":{"source":"official","version_source":"mirror_first"}}"#);
+        assert_eq!((g.download.source, g.download.version_source), (DownloadSource::Official, DownloadSource::OfficialFirst));
+        // A file from before the download section existed gets the new default too.
+        assert_eq!(load(r#"{"schema_version":1}"#).download.version_source, DownloadSource::OfficialFirst);
+        assert_eq!(GlobalSettings::default().download.version_source, DownloadSource::OfficialFirst);
+        // v2 files are never touched again: choosing the mirror afterwards is respected.
+        let g = load(r#"{"schema_version":2,"download":{"version_source":"mirror_first"}}"#);
+        assert_eq!(g.download.version_source, DownloadSource::MirrorFirst);
     }
 
     #[test]

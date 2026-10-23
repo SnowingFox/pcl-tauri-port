@@ -23,8 +23,8 @@ export const defaultGlobalSettings = (): GlobalSettings => ({
   memory: { mode: "auto", custom_mb: 4096, optimize_before_launch: false },
   java: { selected: null, custom_paths: [], prefer_64bit: true },
   download: {
-    source: "mirror_first",
-    version_source: "mirror_first",
+    source: "official_first",
+    version_source: "official_first",
     mod_source: "official_first",
     thread_count: 64,
     speed_limit_bps: 0,

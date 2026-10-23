@@ -38,7 +38,7 @@ Writes are atomic (temp file, fsync, rename). A corrupt `settings.json` is renam
   "memory": { "mode": "auto", "custom_mb": 4096, "optimize_before_launch": false },   // mode: auto | custom
   "java": { "selected": null, "custom_paths": [], "prefer_64bit": true },
   "download": {
-    "source": "mirror_first", "version_source": "mirror_first", "mod_source": "official_first", // official | mirror_first | official_first
+    "source": "official_first", "version_source": "official_first", "mod_source": "official_first", // official | mirror_first | official_first (default: official_first; schema v2)
     "thread_count": 64, "speed_limit_bps": 0, "validate_ssl": true, "translate_mod_names": true
   },
   "ui": {

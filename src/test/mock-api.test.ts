@@ -96,7 +96,7 @@ describe("download / resources / settings mocks", () => {
   it("patches settings recursively", async () => {
     const s = await settingsApi.patch({ download: { thread_count: 7 } });
     expect(s.download.thread_count).toBe(7);
-    expect(s.download.source).toBe("mirror_first");
+    expect(s.download.source).toBe("official_first");
     expect((await settingsApi.get()).download.thread_count).toBe(7);
   });
 });

@@ -25,7 +25,7 @@ const settings = {
   game: { folders: [{ name: "默认文件夹", path: ROOT }], selected_folder: ROOT, selected_instance: null, isolation: "all", window_mode: "default", window_width: 854, window_height: 480, jvm_args: "", game_args: "", pre_launch_command: "", wait_for_pre_launch: true, launcher_visibility: "keep", process_priority: 1, custom_title: "", custom_info: "PCL" },
   memory: { mode: "auto", custom_mb: 4096, optimize_before_launch: false },
   java: { selected: null, custom_paths: [], prefer_64bit: true },
-  download: { source: "mirror_first", version_source: "mirror_first", mod_source: "official_first", thread_count: 64, speed_limit_bps: 0, validate_ssl: true, translate_mod_names: true },
+  download: { source: "official_first", version_source: "official_first", mod_source: "official_first", thread_count: 64, speed_limit_bps: 0, validate_ssl: true, translate_mod_names: true },
   ui: {}, window: {}, launcher: { debug_mode: false, check_update_release: false, check_update_snapshot: false, telemetry: false },
 };
 
