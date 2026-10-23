@@ -271,3 +271,159 @@ async fn stalled_segment_body_fails_in_bounded_time() {
     }
     assert!(!dest.exists(), "no corrupt file may be left at the destination");
 }
+
+/// Per-connection behaviour of [`faulty_mock`].
+#[derive(Clone, Copy)]
+enum Fault {
+    /// Headers, the first `n` bytes, then silence.
+    HangAfter(usize),
+    /// Headers, then `n` bytes every 200 ms: alive, but far too slow.
+    Trickle(usize),
+}
+
+/// Start offsets of every request a [`faulty_mock`] received, in arrival order.
+type Starts = Arc<std::sync::Mutex<Vec<usize>>>;
+
+/// Range server that applies `fault_for(connection_number)` to each connection (None = healthy).
+async fn faulty_mock(
+    body: Vec<u8>,
+    fault_for: impl Fn(usize) -> Option<Fault> + Send + Sync + 'static,
+) -> (String, Arc<AtomicUsize>, Starts) {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", l.local_addr().unwrap());
+    let (body, hits, fault_for) = (Arc::new(body), Arc::new(AtomicUsize::new(0)), Arc::new(fault_for));
+    let starts: Starts = Arc::default();
+    let (h2, st2) = (hits.clone(), starts.clone());
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = l.accept().await else { return };
+            let (body, nth, fault_for, starts) = (body.clone(), h2.fetch_add(1, Ordering::SeqCst), fault_for.clone(), st2.clone());
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 8192];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let range = req.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("range: bytes=").map(|r| r.to_string()));
+                let (a, b, status) = match range {
+                    Some(r) => {
+                        let (a, b) = r.trim().split_once('-').unwrap();
+                        let a: usize = a.parse().unwrap();
+                        let b: usize = if b.is_empty() { body.len() - 1 } else { b.parse().unwrap() };
+                        (a, b, "206 Partial Content")
+                    }
+                    // A plain GET (the single-connection path) gets the whole body.
+                    None => (0, body.len() - 1, "200 OK"),
+                };
+                starts.lock().unwrap().push(a);
+                let part = &body[a..=b];
+                let head = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Range: bytes {a}-{b}/{}\r\nConnection: close\r\n\r\n",
+                    part.len(),
+                    body.len()
+                );
+                let _ = s.write_all(head.as_bytes()).await;
+                match fault_for(nth) {
+                    None => {
+                        let _ = s.write_all(part).await;
+                        let _ = s.shutdown().await;
+                    }
+                    Some(Fault::HangAfter(k)) => {
+                        let _ = s.write_all(&part[..k.min(part.len())]).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                    }
+                    Some(Fault::Trickle(k)) => {
+                        for c in part.chunks(k) {
+                            if s.write_all(c).await.is_err() {
+                                return;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    (base, hits, starts)
+}
+
+fn fast_stall_cfg() -> EngineConfig {
+    let (_, mut cfg, ..) = setup();
+    cfg.stall_window = std::time::Duration::from_millis(600);
+    cfg.stall_min_bytes = 5_000;
+    cfg
+}
+
+/// The failure seen in a real install: one connection of a segmented download dies mid-body.
+/// The segment must reconnect and continue from where it stopped, and the file must be intact.
+#[tokio::test]
+async fn a_dead_segment_resumes_from_where_it_stopped() {
+    let data = payload(100_000);
+    // Connection #1 is the first segment's; it hangs after 1000 bytes. Every later one is healthy.
+    let (base, hits, starts) = faulty_mock(data.clone(), |n| (n == 1).then_some(Fault::HangAfter(1000))).await;
+    let (_, _, ctl, tr, _) = setup();
+    let cfg = fast_stall_cfg();
+    let client = reqwest::Client::builder().read_timeout(std::time::Duration::from_millis(700)).build().unwrap();
+    let d = tempfile::tempdir().unwrap();
+    let dest = d.path().join("ok.bin");
+    tr.begin_stage("s", 0.0, 1.0, 1, data.len() as u64);
+    let spec =
+        FileSpec::new(format!("{base}/data"), &dest).with_size(Some(data.len() as u64)).with_sha1(Some(hex_of(HashKind::Sha1, &data)));
+    tokio::time::timeout(std::time::Duration::from_secs(30), download_file(&client, &cfg, &spec, &ctl, &tr))
+        .await
+        .expect("must not hang")
+        .expect("one dead connection must not fail the download");
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+    assert!(hits.load(Ordering::SeqCst) >= 5, "4 segments + at least one reconnect, got {}", hits.load(Ordering::SeqCst));
+    // 100_000 bytes in 4 segments start at multiples of 25_000. A reconnect that resumes asks for
+    // the byte after the 1000 it already has; one that starts over only ever asks for multiples.
+    let starts = starts.lock().unwrap().clone();
+    assert!(starts.iter().any(|s| s % 25_000 == 1000), "no request resumed at an offset inside a segment: {starts:?}");
+    assert_eq!(tr.done_bytes.load(Ordering::SeqCst), data.len() as u64, "progress must not double count the resumed bytes");
+}
+
+/// A connection that stays alive but delivers almost nothing never trips a read timeout. The
+/// throughput floor must drop it so a retry can get a better connection.
+#[tokio::test]
+async fn a_trickling_connection_is_replaced() {
+    let data = payload(100_000);
+    // 1 KiB every 200 ms is ~5 KiB/s: under the 5000 byte / 600 ms floor.
+    let (base, hits, _) = faulty_mock(data.clone(), |n| (n == 2).then_some(Fault::Trickle(1024))).await;
+    let (_, _, ctl, tr, _) = setup();
+    let cfg = fast_stall_cfg();
+    let client = reqwest::Client::builder().read_timeout(std::time::Duration::from_secs(30)).build().unwrap();
+    let d = tempfile::tempdir().unwrap();
+    let dest = d.path().join("slow.bin");
+    let spec =
+        FileSpec::new(format!("{base}/data"), &dest).with_size(Some(data.len() as u64)).with_sha1(Some(hex_of(HashKind::Sha1, &data)));
+    let t = std::time::Instant::now();
+    tokio::time::timeout(std::time::Duration::from_secs(30), download_file(&client, &cfg, &spec, &ctl, &tr))
+        .await
+        .expect("must not hang")
+        .unwrap();
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+    assert!(hits.load(Ordering::SeqCst) >= 5, "the slow connection was replaced by another request");
+    assert!(t.elapsed() < std::time::Duration::from_secs(20), "took {:?}: the slow connection was waited out", t.elapsed());
+}
+
+/// Pausing for longer than the stall window is not a stall.
+#[tokio::test]
+async fn pausing_longer_than_the_stall_window_is_not_a_stall() {
+    let data = payload(60_000);
+    let (base, ..) = faulty_mock(data.clone(), |_| None).await;
+    let (client, _, ctl, tr, _) = setup();
+    let mut cfg = fast_stall_cfg();
+    cfg.segments = 1; // single-stream path
+    let d = tempfile::tempdir().unwrap();
+    let dest = d.path().join("paused.bin");
+    let spec = FileSpec::new(format!("{base}/data"), &dest).with_sha1(Some(hex_of(HashKind::Sha1, &data)));
+    ctl.pause();
+    let c2 = ctl.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await; // > 2x the 600 ms window
+        c2.resume();
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(20), download_file(&client, &cfg, &spec, &ctl, &tr))
+        .await
+        .expect("must not hang")
+        .unwrap();
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+}

@@ -11,7 +11,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::{Semaphore, watch};
 
@@ -26,11 +26,26 @@ pub struct EngineConfig {
     pub min_segment: u64,
     /// Attempts per candidate URL.
     pub retries: u32,
+    /// A connection that delivers fewer than `stall_min_bytes` within `stall_window` is dropped and
+    /// retried (resuming where it stopped). A throttled CDN edge can keep trickling a few hundred
+    /// bytes per second for hours; that never trips the client's read timeout, which only fires on
+    /// silence. `stall_min_bytes == 0` turns the check off.
+    pub stall_window: Duration,
+    pub stall_min_bytes: u64,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        Self { source: Source::Official, concurrency: 16, segments: 4, min_segment: 2 * 1024 * 1024, retries: 3 }
+        Self {
+            source: Source::Official,
+            concurrency: 16,
+            segments: 4,
+            min_segment: 2 * 1024 * 1024,
+            retries: 3,
+            stall_window: Duration::from_secs(20),
+            // 1 KiB/s. Far below any working link, even one shared by dozens of connections.
+            stall_min_bytes: 20 * 1024,
+        }
     }
 }
 
@@ -323,21 +338,69 @@ pub async fn download_file(
                 Err(DlError::Cancelled) => return Err(DlError::Cancelled),
                 Err(e) => {
                     tracker.sub_bytes(counted.load(Ordering::Relaxed));
+                    tracing::warn!(attempt = attempt + 1, of = cfg.retries.max(1), "download attempt failed for {url}: {e}");
                     last_err = e;
-                    // 4xx other than 408/429 will not get better on retry.
-                    if let DlError::Status(c, _) = &last_err
-                        && (400..500).contains(c)
-                        && *c != 408
-                        && *c != 429
-                    {
+                    if is_permanent(&last_err) {
                         break;
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(200 * (1 << attempt.min(5)))).await;
+                    tokio::time::sleep(backoff(attempt)).await;
                 }
             }
         }
     }
     Err(last_err)
+}
+
+/// 4xx other than 408/429 will not get better on retry.
+fn is_permanent(e: &DlError) -> bool {
+    matches!(e, DlError::Status(c, _) if (400..500).contains(c) && *c != 408 && *c != 429)
+}
+
+fn backoff(attempt: u32) -> Duration {
+    Duration::from_millis(200 * (1 << attempt.min(5)))
+}
+
+/// Watches one connection's throughput (see [`EngineConfig::stall_window`]).
+struct RateGuard<'a> {
+    window: Duration,
+    min_bytes: u64,
+    url: &'a str,
+    since: Instant,
+    got: u64,
+}
+
+impl<'a> RateGuard<'a> {
+    fn new(cfg: &EngineConfig, url: &'a str) -> Self {
+        Self { window: cfg.stall_window, min_bytes: cfg.stall_min_bytes, url, since: Instant::now(), got: 0 }
+    }
+
+    /// Start a fresh window, e.g. after the user paused the task.
+    fn reset(&mut self) {
+        self.since = Instant::now();
+        self.got = 0;
+    }
+
+    /// Count `n` received bytes; errors when a whole window passed with too few.
+    fn feed(&mut self, n: u64) -> DlResult<()> {
+        self.got += n;
+        if self.since.elapsed() >= self.window {
+            if self.got < self.min_bytes {
+                return Err(DlError::Slow { url: self.url.to_string(), min_bytes: self.min_bytes, secs: self.window.as_secs() });
+            }
+            self.reset();
+        }
+        Ok(())
+    }
+}
+
+/// Wait while paused. Time spent paused must not count against the connection.
+async fn checkpoint(ctl: &TaskCtl, guard: &mut RateGuard<'_>) -> DlResult<()> {
+    let was_paused = ctl.state() == RunState::Paused;
+    ctl.checkpoint().await?;
+    if was_paused {
+        guard.reset();
+    }
+    Ok(())
 }
 
 async fn try_once(
@@ -355,12 +418,14 @@ async fn try_once(
         match segmented(client, cfg, spec, url, &part, ctl, tracker, counted).await {
             Err(DlError::Other(m)) if m == "no-range" => {
                 tracker.sub_bytes(counted.swap(0, Ordering::Relaxed));
-                single(client, spec, url, &part, ctl, tracker, counted).await
+                // `segmented` preallocated the file with zeros; `single` would resume after them.
+                let _ = tokio::fs::remove_file(&part).await;
+                single(client, cfg, spec, url, &part, ctl, tracker, counted).await
             }
             r => r,
         }
     } else {
-        single(client, spec, url, &part, ctl, tracker, counted).await
+        single(client, cfg, spec, url, &part, ctl, tracker, counted).await
     };
     if let Err(e) = res {
         // Keep the partial only for a resumable single-stream failure; drop on hash/size problems.
@@ -383,8 +448,10 @@ async fn check_status(resp: reqwest::Response, url: &str) -> DlResult<reqwest::R
 }
 
 /// One connection; resumes from an existing `.part` via Range when possible.
+#[allow(clippy::too_many_arguments)]
 async fn single(
     client: &reqwest::Client,
+    cfg: &EngineConfig,
     spec: &FileSpec,
     url: &str,
     part: &Path,
@@ -416,19 +483,23 @@ async fn single(
     } else {
         tokio::fs::File::create(part).await?
     };
+    let mut guard = RateGuard::new(cfg, url);
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        ctl.checkpoint().await?;
+        checkpoint(ctl, &mut guard).await?;
         let chunk = chunk?;
         file.write_all(&chunk).await?;
         counted.fetch_add(chunk.len() as u64, Ordering::Relaxed);
         tracker.add_bytes(chunk.len() as u64);
+        guard.feed(chunk.len() as u64)?;
     }
     file.flush().await?;
     Ok(())
 }
 
 /// Several parallel Range requests writing into one preallocated file.
+/// Every segment retries on its own and resumes from the last byte it wrote, so a stalled or
+/// throttled connection costs a reconnect, not the whole file.
 /// Not resumable across process restarts (stage-level resume skips finished files).
 #[allow(clippy::too_many_arguments)]
 async fn segmented(
@@ -448,37 +519,10 @@ async fn segmented(
         f.set_len(total).await?;
     }
     let mut set = tokio::task::JoinSet::new();
-    for (s, e) in ranges {
-        let client = client.clone();
-        let url = url.to_string();
-        let part = part.to_path_buf();
-        let ctl = ctl.clone();
-        let counted = counted.clone();
-        let tracker = tracker.clone();
-        set.spawn(async move {
-            let resp = client.get(&url).header("Range", format!("bytes={s}-{e}")).send().await?;
-            let resp = check_status(resp, &url).await?;
-            if resp.status().as_u16() != 206 {
-                return Err(DlError::Other("no-range".into()));
-            }
-            let mut f = tokio::fs::OpenOptions::new().write(true).open(&part).await?;
-            f.seek(std::io::SeekFrom::Start(s)).await?;
-            let mut stream = resp.bytes_stream();
-            let mut got = 0u64;
-            while let Some(chunk) = stream.next().await {
-                ctl.checkpoint().await?;
-                let chunk = chunk?;
-                f.write_all(&chunk).await?;
-                got += chunk.len() as u64;
-                counted.fetch_add(chunk.len() as u64, Ordering::Relaxed);
-                tracker.add_bytes(chunk.len() as u64);
-            }
-            f.flush().await?;
-            if got != e - s + 1 {
-                return Err(DlError::Size { path: part.display().to_string(), expected: e - s + 1, actual: got });
-            }
-            Ok::<(), DlError>(())
-        });
+    for range in ranges {
+        let (client, cfg, url, part) = (client.clone(), cfg.clone(), url.to_string(), part.to_path_buf());
+        let (ctl, counted, tracker) = (ctl.clone(), counted.clone(), tracker.clone());
+        set.spawn(async move { fetch_segment(&client, &cfg, &url, &part, range, &ctl, &tracker, &counted).await });
     }
     let mut result = Ok(());
     while let Some(r) = set.join_next().await {
@@ -494,6 +538,83 @@ async fn segmented(
         }
     }
     result
+}
+
+/// Download bytes `s..=e` into `part`, reconnecting (and resuming) up to `cfg.retries` times.
+#[allow(clippy::too_many_arguments)]
+async fn fetch_segment(
+    client: &reqwest::Client,
+    cfg: &EngineConfig,
+    url: &str,
+    part: &Path,
+    (s, e): (u64, u64),
+    ctl: &TaskCtl,
+    tracker: &Arc<Tracker>,
+    counted: &Arc<AtomicU64>,
+) -> DlResult<()> {
+    let mut pos = s;
+    let mut last = DlError::Other("segment not attempted".into());
+    for attempt in 0..cfg.retries.max(1) {
+        ctl.checkpoint().await?;
+        match segment_attempt(client, cfg, url, part, (s, e), &mut pos, ctl, tracker, counted).await {
+            Ok(()) => return Ok(()),
+            Err(DlError::Cancelled) => return Err(DlError::Cancelled),
+            // The server ignores Range: the caller falls back to one plain connection.
+            Err(DlError::Other(m)) if m == "no-range" => return Err(DlError::Other(m)),
+            Err(err) => {
+                if is_permanent(&err) {
+                    return Err(err);
+                }
+                tracing::warn!(attempt = attempt + 1, resume_at = pos, "segment {s}-{e} of {url} failed: {err}");
+                last = err;
+                tokio::time::sleep(backoff(attempt)).await;
+            }
+        }
+    }
+    Err(last)
+}
+
+/// One connection for the rest of a segment, starting at `*pos` (advanced as bytes are written).
+#[allow(clippy::too_many_arguments)]
+async fn segment_attempt(
+    client: &reqwest::Client,
+    cfg: &EngineConfig,
+    url: &str,
+    part: &Path,
+    (s, e): (u64, u64),
+    pos: &mut u64,
+    ctl: &TaskCtl,
+    tracker: &Arc<Tracker>,
+    counted: &Arc<AtomicU64>,
+) -> DlResult<()> {
+    let resp = client.get(url).header("Range", format!("bytes={}-{e}", *pos)).send().await?;
+    let resp = check_status(resp, url).await?;
+    if resp.status().as_u16() != 206 {
+        return Err(DlError::Other("no-range".into()));
+    }
+    let mut f = tokio::fs::OpenOptions::new().write(true).open(part).await?;
+    f.seek(std::io::SeekFrom::Start(*pos)).await?;
+    let mut guard = RateGuard::new(cfg, url);
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        checkpoint(ctl, &mut guard).await?;
+        let chunk = chunk?;
+        // Never write past the end of this segment, whatever the server sends.
+        let take = chunk.len().min((e + 1 - *pos) as usize);
+        f.write_all(&chunk[..take]).await?;
+        *pos += take as u64;
+        counted.fetch_add(take as u64, Ordering::Relaxed);
+        tracker.add_bytes(take as u64);
+        if *pos > e {
+            break;
+        }
+        guard.feed(chunk.len() as u64)?;
+    }
+    f.flush().await?;
+    if *pos <= e {
+        return Err(DlError::Size { path: part.display().to_string(), expected: e - s + 1, actual: *pos - s });
+    }
+    Ok(())
 }
 
 /// Download many files with bounded concurrency. Fails fast on first error.
@@ -533,4 +654,42 @@ pub async fn download_batch(
 
 fn flatten(r: Result<DlResult<()>, tokio::task::JoinError>) -> DlResult<()> {
     r.map_err(|e| DlError::Other(e.to_string()))?
+}
+
+#[cfg(test)]
+mod rate_guard_tests {
+    use super::*;
+
+    fn cfg(window_ms: u64, min: u64) -> EngineConfig {
+        EngineConfig { stall_window: Duration::from_millis(window_ms), stall_min_bytes: min, ..Default::default() }
+    }
+
+    #[test]
+    fn a_slow_window_is_an_error_and_a_fast_one_is_not() {
+        let c = cfg(30, 100);
+        let mut g = RateGuard::new(&c, "u");
+        g.feed(10).unwrap(); // window not over yet: nothing to judge
+        std::thread::sleep(Duration::from_millis(40));
+        assert!(matches!(g.feed(10), Err(DlError::Slow { .. })), "20 bytes in a 30 ms window with a 100 byte floor");
+
+        let mut g = RateGuard::new(&c, "u");
+        std::thread::sleep(Duration::from_millis(40));
+        g.feed(500).unwrap();
+        std::thread::sleep(Duration::from_millis(40));
+        g.feed(500).unwrap(); // each window met the floor and starts over
+    }
+
+    #[test]
+    fn reset_forgives_time_spent_paused_and_zero_disables_the_check() {
+        let c = cfg(30, 100);
+        let mut g = RateGuard::new(&c, "u");
+        std::thread::sleep(Duration::from_millis(40));
+        g.reset();
+        g.feed(1).unwrap();
+
+        let off = cfg(1, 0);
+        let mut g = RateGuard::new(&off, "u");
+        std::thread::sleep(Duration::from_millis(5));
+        g.feed(0).unwrap();
+    }
 }

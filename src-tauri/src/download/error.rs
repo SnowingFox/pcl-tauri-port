@@ -12,6 +12,8 @@ pub enum DlError {
     Hash { path: String, expected: String, actual: String },
     #[error("size mismatch for {path}: expected {expected}, got {actual}")]
     Size { path: String, expected: u64, actual: u64 },
+    #[error("connection too slow (under {min_bytes} bytes in {secs}s): {url}")]
+    Slow { url: String, min_bytes: u64, secs: u64 },
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
     #[error("zip: {0}")]
