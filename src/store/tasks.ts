@@ -3,6 +3,7 @@ import { downloadApi, type DownloadFinished, type DownloadProgress, type Modpack
 import { reportError } from "../lib/notify";
 import { useUi } from "./ui";
 import { useGame } from "./game";
+import type { DownloadLoad } from "../api/types";
 
 export interface TaskView {
   taskId: string;
@@ -13,6 +14,8 @@ export interface TaskView {
   speedBps: number;
   doneFiles: number;
   totalFiles: number;
+  /** latest engine load figures; absent until the first progress event */
+  load?: DownloadLoad;
   error?: string;
 }
 
@@ -74,7 +77,7 @@ export const useTasks = create<TasksState>((set, get) => ({
       const base: TaskView = known ?? { taskId: p.taskId, label: "", status: "running", stage: "", fraction: 0, speedBps: 0, doneFiles: 0, totalFiles: 0 };
       const status: TaskStatus = p.state === "paused" ? "paused" : p.state === "cancelled" ? "cancelled" : "running";
       return {
-        tasks: { ...s.tasks, [p.taskId]: { ...base, status, stage: p.stage, fraction: p.fraction, speedBps: p.speedBps, doneFiles: p.doneFiles, totalFiles: p.totalFiles } },
+        tasks: { ...s.tasks, [p.taskId]: { ...base, status, stage: p.stage, fraction: p.fraction, speedBps: p.speedBps, doneFiles: p.doneFiles, totalFiles: p.totalFiles, load: p.load } },
         order: s.order.includes(p.taskId) ? s.order : [...s.order, p.taskId],
       };
     });

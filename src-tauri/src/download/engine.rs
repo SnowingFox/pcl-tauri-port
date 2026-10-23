@@ -150,6 +150,17 @@ pub struct ProgressEvent {
     /// Overall task fraction 0..1 (set by the task runner; stage-local otherwise).
     pub fraction: f64,
     pub state: RunState,
+    /// Files being transferred right now / HTTP connections open right now.
+    pub active_files: u64,
+    pub active_connections: u64,
+    /// Configured ceilings: files in flight, and connections per large file.
+    pub concurrency: u64,
+    pub segments: u64,
+    /// Async runtime worker threads, and logical cores on the machine.
+    pub worker_threads: u64,
+    pub cores: u64,
+    /// CPU the whole process used over the last interval, in cores (0.5 = half of one core).
+    pub cpu_cores: f64,
 }
 
 pub type Sink = Arc<dyn Fn(&ProgressEvent) + Send + Sync>;
@@ -166,7 +177,16 @@ pub struct Tracker {
     pub weight: Mutex<(f64, f64)>,
     /// (offset, factor) applied on top of the stage weight, for tasks made of several phases.
     pub scale: Mutex<(f64, f64)>,
-    last: Mutex<(Instant, u64, u64)>,
+    /// Live gauges: files being transferred, connections open.
+    pub active_files: AtomicU64,
+    pub active_conns: AtomicU64,
+    /// Configured ceilings, for display only (see [`Tracker::set_limits`]).
+    max_files: AtomicU64,
+    max_segments: AtomicU64,
+    /// Process CPU over the last interval, in thousandths of a core.
+    cpu_milli: AtomicU64,
+    /// (time, bytes, speed, process cpu seconds) at the previous emit.
+    last: Mutex<(Instant, u64, u64, f64)>,
     sink: Sink,
     ctl: TaskCtl,
 }
@@ -182,7 +202,12 @@ impl Tracker {
             total_files: 0.into(),
             weight: Mutex::new((0.0, 1.0)),
             scale: Mutex::new((0.0, 1.0)),
-            last: Mutex::new((Instant::now(), 0, 0)),
+            active_files: 0.into(),
+            active_conns: 0.into(),
+            max_files: 0.into(),
+            max_segments: 0.into(),
+            cpu_milli: 0.into(),
+            last: Mutex::new((Instant::now(), 0, 0, process_cpu_secs())),
             sink,
             ctl,
         })
@@ -200,8 +225,14 @@ impl Tracker {
         self.done_files.store(0, Ordering::Relaxed);
         self.total_files.store(files, Ordering::Relaxed);
         self.total_bytes.store(bytes, Ordering::Relaxed);
-        *self.last.lock().unwrap() = (Instant::now(), 0, 0);
+        *self.last.lock().unwrap() = (Instant::now(), 0, 0, process_cpu_secs());
         self.emit(true);
+    }
+
+    /// Record the configured ceilings so the UI can show "24 of 64 files".
+    pub fn set_limits(&self, files: usize, segments: usize) {
+        self.max_files.store(files as u64, Ordering::Relaxed);
+        self.max_segments.store(segments as u64, Ordering::Relaxed);
     }
 
     pub fn add_bytes(&self, n: u64) {
@@ -240,6 +271,13 @@ impl Tracker {
             speed_bps: speed,
             fraction: off + fac * (s + w * local),
             state: self.ctl.state(),
+            active_files: self.active_files.load(Ordering::Relaxed),
+            active_connections: self.active_conns.load(Ordering::Relaxed),
+            concurrency: self.max_files.load(Ordering::Relaxed),
+            segments: self.max_segments.load(Ordering::Relaxed),
+            worker_threads: tokio::runtime::Handle::try_current().map(|h| h.metrics().num_workers() as u64).unwrap_or(1),
+            cores: std::thread::available_parallelism().map(|n| n.get() as u64).unwrap_or(1),
+            cpu_cores: self.cpu_milli.load(Ordering::Relaxed) as f64 / 1000.0,
         }
     }
 
@@ -252,7 +290,9 @@ impl Tracker {
         let db = self.done_bytes.load(Ordering::Relaxed);
         let secs = el.as_secs_f64().max(0.001);
         let speed = (db.saturating_sub(last.1) as f64 / secs) as u64;
-        *last = (Instant::now(), db, speed);
+        let cpu = process_cpu_secs();
+        self.cpu_milli.store(((cpu - last.3).max(0.0) / secs * 1000.0) as u64, Ordering::Relaxed);
+        *last = (Instant::now(), db, speed, cpu);
         drop(last);
         (self.sink)(&self.snapshot(speed));
     }
@@ -322,6 +362,8 @@ pub async fn download_file(
     if let Some(parent) = spec.dest.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
+    tracker.set_limits(cfg.concurrency, cfg.segments);
+    let _file = Gauge::new(&tracker.active_files);
     let urls: Vec<String> = spec.urls.iter().flat_map(|u| candidates(u, cfg.source)).fold(Vec::new(), |mut acc, u| {
         if !acc.contains(&u) {
             acc.push(u);
@@ -349,6 +391,38 @@ pub async fn download_file(
         }
     }
     Err(last_err)
+}
+
+/// CPU seconds (user + system) the whole process has used so far.
+pub fn process_cpu_secs() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut ru = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        // SAFETY: `ru` is a valid, writable rusage for the duration of the call.
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, ru.as_mut_ptr()) } == 0 {
+            // SAFETY: getrusage succeeded, so it filled the struct.
+            let ru = unsafe { ru.assume_init() };
+            let secs = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+            return secs(ru.ru_utime) + secs(ru.ru_stime);
+        }
+    }
+    0.0
+}
+
+/// Counts one unit on a live gauge for as long as it is alive.
+struct Gauge<'a>(&'a AtomicU64);
+
+impl<'a> Gauge<'a> {
+    fn new(counter: &'a AtomicU64) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self(counter)
+    }
+}
+
+impl Drop for Gauge<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// 4xx other than 408/429 will not get better on retry.
@@ -465,6 +539,7 @@ async fn single(
     {
         existing = 0;
     }
+    let _conn = Gauge::new(&tracker.active_conns);
     let mut req = client.get(url);
     if existing > 0 {
         req = req.header("Range", format!("bytes={existing}-"));
@@ -587,6 +662,7 @@ async fn segment_attempt(
     tracker: &Arc<Tracker>,
     counted: &Arc<AtomicU64>,
 ) -> DlResult<()> {
+    let _conn = Gauge::new(&tracker.active_conns);
     let resp = client.get(url).header("Range", format!("bytes={}-{e}", *pos)).send().await?;
     let resp = check_status(resp, url).await?;
     if resp.status().as_u16() != 206 {
@@ -625,6 +701,7 @@ pub async fn download_batch(
     ctl: &TaskCtl,
     tracker: &Arc<Tracker>,
 ) -> DlResult<()> {
+    tracker.set_limits(cfg.concurrency, cfg.segments);
     let sem = Arc::new(Semaphore::new(cfg.concurrency.max(1)));
     let mut set = tokio::task::JoinSet::new();
     for spec in files {
@@ -691,5 +768,23 @@ mod rate_guard_tests {
         let mut g = RateGuard::new(&off, "u");
         std::thread::sleep(Duration::from_millis(5));
         g.feed(0).unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod cpu_meter_tests {
+    use super::*;
+
+    #[test]
+    fn process_cpu_time_advances_when_the_process_works() {
+        let before = process_cpu_secs();
+        let t = Instant::now();
+        let mut x = 0u64;
+        while t.elapsed() < Duration::from_millis(80) {
+            x = x.wrapping_add(std::hint::black_box(1));
+        }
+        std::hint::black_box(x);
+        let used = process_cpu_secs() - before;
+        assert!(used >= 0.04, "busy-looping for 80 ms registered only {used:.3} s of CPU");
     }
 }

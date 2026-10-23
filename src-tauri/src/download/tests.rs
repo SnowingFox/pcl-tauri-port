@@ -427,3 +427,41 @@ async fn pausing_longer_than_the_stall_window_is_not_a_stall() {
         .unwrap();
     assert_eq!(std::fs::read(&dest).unwrap(), data);
 }
+
+/// While a segmented download runs, the live gauges show 1 file on 4 connections, plus the
+/// configured ceilings and the machine's parallelism; afterwards everything is back to zero.
+#[tokio::test]
+async fn live_load_gauges_count_files_and_connections_and_return_to_zero() {
+    let data = payload(100_000);
+    // ~0.6 s per segment, long enough to sample while all four connections are open.
+    let (base, ..) = faulty_mock(data.clone(), |_| Some(Fault::Trickle(10_000))).await;
+    let (client, mut cfg, ctl, tr, _) = setup();
+    cfg.segments = 4;
+    cfg.concurrency = 7;
+    let d = tempfile::tempdir().unwrap();
+    let dest = d.path().join("g.bin");
+    let spec =
+        FileSpec::new(format!("{base}/data"), &dest).with_size(Some(data.len() as u64)).with_sha1(Some(hex_of(HashKind::Sha1, &data)));
+    let job = {
+        let (client, cfg, ctl, tr, spec) = (client.clone(), cfg.clone(), ctl.clone(), tr.clone(), spec.clone());
+        tokio::spawn(async move { download_file(&client, &cfg, &spec, &ctl, &tr).await })
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut seen = None;
+    while std::time::Instant::now() < deadline {
+        let s = tr.snapshot(0);
+        if s.active_connections == 4 {
+            seen = Some(s);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+    let s = seen.expect("4 connections were never open at the same time");
+    assert_eq!(s.active_files, 1);
+    assert_eq!((s.concurrency, s.segments), (7, 4), "configured ceilings are reported");
+    assert!(s.cores >= 1 && s.worker_threads >= 1);
+    job.await.unwrap().unwrap();
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+    let s = tr.snapshot(0);
+    assert_eq!((s.active_files, s.active_connections), (0, 0), "gauges must return to zero, also after a finished download");
+}

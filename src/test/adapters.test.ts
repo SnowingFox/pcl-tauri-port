@@ -122,7 +122,8 @@ describe("download adapters", () => {
   });
   it("maps progress events (snake_case) and clamps the fraction", () => {
     const p = toDownloadProgress({ task_id: "T", stage: "libraries", done_bytes: 5, total_bytes: 10, done_files: 1, total_files: 2, speed_bps: 100, fraction: 1.4, state: "paused" });
-    expect(p).toEqual({ taskId: "T", stage: "libraries", fraction: 1, doneBytes: 5, totalBytes: 10, doneFiles: 1, totalFiles: 2, speedBps: 100, state: "paused" });
+    expect(p).toEqual({ taskId: "T", stage: "libraries", fraction: 1, doneBytes: 5, totalBytes: 10, doneFiles: 1, totalFiles: 2, speedBps: 100, state: "paused",
+      load: { activeFiles: 0, activeConnections: 0, concurrency: 0, segments: 0, workerThreads: 0, cores: 0, cpuCores: 0 } });
   });
   it("maps finished events and task lists", () => {
     const info = { task_id: "T", kind: "install", label: "1.21", status: "failed", error: "http: boom", last_progress: null };
@@ -170,5 +171,15 @@ describe("util", () => {
     expect(safeImageUrl("http://a/b.png")).toBeUndefined();
     expect(safeImageUrl("data:text/html;base64,AAA")).toBeUndefined();
     expect(safeImageUrl(null)).toBeUndefined();
+  });
+});
+
+describe("download progress load figures", () => {
+  it("maps the engine's live load and tolerates an older backend without it", () => {
+    const base = { task_id: "t", stage: "assets", done_bytes: 1, total_bytes: 2, done_files: 3, total_files: 4, speed_bps: 5, fraction: 0.5, state: "running" };
+    const full = toDownloadProgress({ ...base, active_files: 24, active_connections: 61, concurrency: 64, segments: 4, worker_threads: 18, cores: 18, cpu_cores: 0.62 });
+    expect(full.load).toEqual({ activeFiles: 24, activeConnections: 61, concurrency: 64, segments: 4, workerThreads: 18, cores: 18, cpuCores: 0.62 });
+    const old = toDownloadProgress(base);
+    expect(old.load).toEqual({ activeFiles: 0, activeConnections: 0, concurrency: 0, segments: 0, workerThreads: 0, cores: 0, cpuCores: 0 });
   });
 });

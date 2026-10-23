@@ -57,6 +57,14 @@ export interface RawProgressEvent {
   speed_bps: number;
   fraction: number;
   state: string;
+  /** Live load; absent when talking to an older backend. */
+  active_files?: number;
+  active_connections?: number;
+  concurrency?: number;
+  segments?: number;
+  worker_threads?: number;
+  cores?: number;
+  cpu_cores?: number;
 }
 export interface RawTaskInfo {
   task_id: string;

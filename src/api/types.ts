@@ -152,6 +152,19 @@ export interface DownloadProgress {
   totalFiles: number;
   speedBps: number;
   state: "running" | "paused" | "cancelled";
+  load: DownloadLoad;
+}
+/** What the download engine is doing right now and what it is allowed to use. */
+export interface DownloadLoad {
+  activeFiles: number;
+  activeConnections: number;
+  /** configured files in flight / connections per large file */
+  concurrency: number;
+  segments: number;
+  workerThreads: number;
+  cores: number;
+  /** CPU the process used over the last interval, in cores */
+  cpuCores: number;
 }
 export interface DownloadFinished {
   taskId: string;

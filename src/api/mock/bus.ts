@@ -48,6 +48,7 @@ export function mockRunTask(taskId: string, label: string, opts: { kind?: string
     mockEmit("download://progress", {
       task_id: taskId, stage: n < steps ? "libraries" : "assets", done_bytes: n * 1_000_000, total_bytes: steps * 1_000_000,
       done_files: n, total_files: steps, speed_bps: 4_000_000, fraction: n / steps, state: "running",
+      active_files: 24, active_connections: 61, concurrency: 64, segments: 4, worker_threads: 18, cores: 18, cpu_cores: 0.6,
     });
     if (opts.fail && n >= Math.ceil(steps / 2)) return finish("failed", opts.fail);
     if (n >= steps) return finish("completed");

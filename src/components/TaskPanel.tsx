@@ -3,11 +3,19 @@ import { Button, Card, ProgressBar } from "./ui";
 import { formatSpeed } from "./format";
 import { activeTasks, useTasks, type TaskView } from "../store/tasks";
 import { t } from "../i18n";
+import type { DownloadLoad } from "../api/types";
 
 const STAGE_LABEL: Record<string, string> = {
   "version-json": "版本信息", "client-jar": "游戏本体", libraries: "依赖库", "asset-index": "资源索引", assets: "游戏资源",
   "log-config": "日志配置", "loader-profile": "加载器配置", installer: "安装器", "loader-libraries": "加载器依赖库", processors: "处理文件",
 };
+
+function loadVars(l: DownloadLoad) {
+  return {
+    files: l.activeFiles, maxFiles: l.concurrency, conns: l.activeConnections, segments: l.segments,
+    threads: l.workerThreads, cpu: l.cpuCores.toFixed(1), cores: l.cores,
+  };
+}
 
 function TaskRow({ task }: { task: TaskView }) {
   const { pause, resume, cancel } = useTasks();
@@ -34,6 +42,11 @@ function TaskRow({ task }: { task: TaskView }) {
         {running && task.speedBps > 0 && ` · ${formatSpeed(task.speedBps)}`}
         {` · ${pct}%`}
       </div>
+      {running && task.load && task.load.concurrency > 0 && (
+        <div className="dim" style={{ fontSize: 12 }} title={t("download.load", loadVars(task.load))}>
+          {t("download.load", loadVars(task.load))}
+        </div>
+      )}
     </li>
   );
 }

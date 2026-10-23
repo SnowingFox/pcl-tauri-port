@@ -59,6 +59,7 @@ const zhCN = {
     installedOk: "已开始安装", filterVersion: "游戏版本", versionsFailed: "获取版本列表失败",
     loaderFailed: "获取加载器版本失败", noLoaderVersions: "该游戏版本没有可用的加载器版本",
     tasks: "下载任务", noTasks: "暂无下载任务", clearFinished: "清除已结束", speed: "速度",
+    load: "并发 {files}/{maxFiles} 个文件 · {conns} 个连接 · 单文件最多 {segments} 段 · 线程 {threads} · CPU {cpu}/{cores} 核",
     source: "来源", srcAll: "全部来源", srcModrinth: "Modrinth", srcCurseforge: "CurseForge",
     installModpackNew: "安装为新实例", modpackName: "新实例名称", modpackFile: "从本地文件安装整合包",
     filePath: "整合包文件路径（.mrpack 或 .zip）", needInstanceForRes: "请先选择要安装到的实例",

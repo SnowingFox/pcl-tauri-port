@@ -121,6 +121,11 @@ export function toDownloadProgress(r: RawProgressEvent): DownloadProgress {
     taskId: r.task_id, stage: r.stage, fraction: clamp01(r.fraction), doneBytes: r.done_bytes, totalBytes: r.total_bytes,
     doneFiles: r.done_files, totalFiles: r.total_files, speedBps: r.speed_bps,
     state: r.state === "paused" || r.state === "cancelled" ? r.state : "running",
+    load: {
+      activeFiles: r.active_files ?? 0, activeConnections: r.active_connections ?? 0,
+      concurrency: r.concurrency ?? 0, segments: r.segments ?? 0,
+      workerThreads: r.worker_threads ?? 0, cores: r.cores ?? 0, cpuCores: r.cpu_cores ?? 0,
+    },
   };
 }
 export function toDownloadFinished(r: RawTaskInfo): DownloadFinished {

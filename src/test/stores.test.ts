@@ -18,6 +18,8 @@ import { setWindowDriver } from "../lib/windowBehavior";
 mockConfig.latency = 0;
 setWindowDriver({ hide: async () => {}, show: async () => {}, minimize: async () => {}, unminimize: async () => {}, setFocus: async () => {}, close: async () => {} });
 
+const NO_LOAD = { activeFiles: 0, activeConnections: 0, concurrency: 0, segments: 0, workerThreads: 0, cores: 0, cpuCores: 0 };
+
 describe("ui store", () => {
   beforeEach(() => { mem.clear(); useUi.setState({ toasts: [] }); });
   it("defaults to blue hue (licence)", () => {
@@ -174,7 +176,7 @@ describe("settings store (mock api)", () => {
 describe("tasks store", () => {
   beforeEach(() => useTasks.setState({ tasks: {}, order: [], report: null }));
   it("creates a task lazily from an early progress event and keeps the label from track()", () => {
-    useTasks.getState().onProgress({ taskId: "T", stage: "libraries", fraction: 0.2, doneBytes: 1, totalBytes: 5, doneFiles: 1, totalFiles: 5, speedBps: 10, state: "running" });
+    useTasks.getState().onProgress({ taskId: "T", stage: "libraries", fraction: 0.2, doneBytes: 1, totalBytes: 5, doneFiles: 1, totalFiles: 5, speedBps: 10, state: "running", load: NO_LOAD });
     useTasks.getState().track("T", "1.21 Fabric");
     const s = useTasks.getState();
     expect(s.tasks.T).toMatchObject({ label: "1.21 Fabric", fraction: 0.2, status: "running" });
@@ -182,7 +184,7 @@ describe("tasks store", () => {
   });
   it("reflects pause state from events and finishes", () => {
     useTasks.getState().track("T", "x");
-    useTasks.getState().onProgress({ taskId: "T", stage: "assets", fraction: 0.5, doneBytes: 0, totalBytes: 0, doneFiles: 0, totalFiles: 0, speedBps: 0, state: "paused" });
+    useTasks.getState().onProgress({ taskId: "T", stage: "assets", fraction: 0.5, doneBytes: 0, totalBytes: 0, doneFiles: 0, totalFiles: 0, speedBps: 0, state: "paused", load: NO_LOAD });
     expect(useTasks.getState().tasks.T.status).toBe("paused");
     useTasks.getState().onFinished({ taskId: "T", kind: "install", label: "x", status: "completed" });
     expect(useTasks.getState().tasks.T).toMatchObject({ status: "completed", fraction: 1 });
@@ -191,7 +193,7 @@ describe("tasks store", () => {
   it("late progress cannot resurrect a finished task", () => {
     useTasks.getState().track("T", "x");
     useTasks.getState().onFinished({ taskId: "T", kind: "install", label: "x", status: "failed", error: "boom" });
-    useTasks.getState().onProgress({ taskId: "T", stage: "assets", fraction: 0.9, doneBytes: 0, totalBytes: 0, doneFiles: 0, totalFiles: 0, speedBps: 0, state: "running" });
+    useTasks.getState().onProgress({ taskId: "T", stage: "assets", fraction: 0.9, doneBytes: 0, totalBytes: 0, doneFiles: 0, totalFiles: 0, speedBps: 0, state: "running", load: NO_LOAD });
     expect(useTasks.getState().tasks.T.status).toBe("failed");
     expect(useTasks.getState().tasks.T.error).toBe("boom");
   });
