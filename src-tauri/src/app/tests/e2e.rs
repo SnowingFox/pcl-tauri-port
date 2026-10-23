@@ -15,13 +15,15 @@ fn java_from_env() -> Option<String> {
 async fn install_and_launch(h: &mut Harness, mc: &str, loader: Option<ainstall::LoaderChoice>, name: &str) -> Vec<String> {
     let id = ainstall::install_game(&h.ctx, mc.into(), loader, Some(name.into())).await.expect("install starts");
     let mut last = 0.0;
+    let mut last_print = std::time::Instant::now();
     let info = loop {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         let i = h.ctx.mgr.info(&id).unwrap();
         if let Some(p) = &i.last_progress
-            && p.fraction - last > 0.1
+            && (p.fraction - last > 0.1 || last_print.elapsed() >= std::time::Duration::from_secs(30))
         {
             last = p.fraction;
+            last_print = std::time::Instant::now();
             eprintln!("  install {:>3.0}%  stage={} files={}/{}", p.fraction * 100.0, p.stage, p.done_files, p.total_files);
         }
         if !matches!(format!("{:?}", i.status).as_str(), "Running" | "Paused") {

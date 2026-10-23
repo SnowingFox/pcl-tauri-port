@@ -47,6 +47,12 @@ impl Harness {
     /// Use `dir` as the whole sandbox (kept afterwards; lets slow real-network tests resume).
     pub fn in_dir(dir: PathBuf) -> Self {
         std::fs::create_dir_all(&dir).unwrap();
+        // Without a subscriber every `tracing::warn!` in the code under test (failed download attempts,
+        // dropped slow connections, ...) is discarded, which makes a slow real-network run undiagnosable.
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()))
+            .with_test_writer()
+            .try_init();
         let root = dir.join("mc");
         std::fs::create_dir_all(root.join("versions")).unwrap();
         let events: Events = Arc::default();
